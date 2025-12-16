@@ -1,7 +1,6 @@
 // --- Level_SO.cs ---
 
 using System.Collections.Generic;
-using UnityEditor.Overlays;
 using UnityEngine;
 
 /// <summary>
@@ -46,4 +45,8 @@ public class Level_SO : ScriptableObject
 	[Header("Interactive Objects")]
 	public List<PressurePlateData> pressurePlates;
 	public List<LaserGateData> laserGates;
+
+
+	[Header("Teleportation")]
+	public List<PortalData> portals; // New
 }

@@ -144,7 +144,7 @@ Transform:
   m_GameObject: {fileID: 311668528}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 3.7164736, y: 0, z: 4.1626797}
+  m_LocalPosition: {x: 4, y: 0, z: 4}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -236,13 +236,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 330585543}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.42141575, y: 0.004077017, z: -0.0018999798, w: -0.9068564}
-  m_LocalPosition: {x: 7.5975127, y: 11.73771, z: -1.0816008}
+  m_LocalRotation: {x: 0.5906056, y: 0, z: 0, w: 0.8069604}
+  m_LocalPosition: {x: 9.274975, y: 11.7244, z: 5.1443367}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 72.4, y: 0, z: 0}
 --- !u!114 &330585547
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -443,6 +443,7 @@ MonoBehaviour:
   boxPrefab: {fileID: 8110669280161148910, guid: 1bd0a409dc4767c49bd28bde3d76aba8, type: 3}
   iceCubePrefab: {fileID: 8110669280161148910, guid: 69d7dce0711605548b0e1b90a7b592ac, type: 3}
   holePrefab: {fileID: 8110669280161148910, guid: 382a6140f8ac882428bafe1e305f7d92, type: 3}
+  portalPrefab: {fileID: 8110669280161148910, guid: 2342276cef4e1374d93972a61961994a, type: 3}
   laserGatePrefab: {fileID: 8110669280161148910, guid: ba205824b61317d42bb13295d4fe2e7e, type: 3}
   pressurePlatePrefab: {fileID: 8110669280161148910, guid: aff292a73a15dd84e9ece980e98a4e6b, type: 3}
   plateMoveDuration: 0.1
@@ -558,6 +559,63 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1001 &954808082
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 87598904807405570, guid: 6a85c4e023abae04893afd868dce020f, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 4
+      objectReference: {fileID: 0}
+    - target: {fileID: 87598904807405570, guid: 6a85c4e023abae04893afd868dce020f, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 87598904807405570, guid: 6a85c4e023abae04893afd868dce020f, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 4
+      objectReference: {fileID: 0}
+    - target: {fileID: 87598904807405570, guid: 6a85c4e023abae04893afd868dce020f, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 87598904807405570, guid: 6a85c4e023abae04893afd868dce020f, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 87598904807405570, guid: 6a85c4e023abae04893afd868dce020f, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 87598904807405570, guid: 6a85c4e023abae04893afd868dce020f, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 87598904807405570, guid: 6a85c4e023abae04893afd868dce020f, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 87598904807405570, guid: 6a85c4e023abae04893afd868dce020f, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 87598904807405570, guid: 6a85c4e023abae04893afd868dce020f, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 608302208562585332, guid: 6a85c4e023abae04893afd868dce020f, type: 3}
+      propertyPath: m_Name
+      value: FloorVisuals
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 6a85c4e023abae04893afd868dce020f, type: 3}
 --- !u!1 &1091302442
 GameObject:
   m_ObjectHideFlags: 0
@@ -868,3 +926,4 @@ SceneRoots:
   - {fileID: 429210290}
   - {fileID: 1679388564}
   - {fileID: 926652677}
+  - {fileID: 954808082}

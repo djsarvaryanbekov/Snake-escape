@@ -126,6 +126,14 @@ public class LevelManager : MonoBehaviour
 			gameManager.RegisterGate(gate, gateData);
 		}
 
+		// 11. Create and place Portal objects (NEW).
+		foreach (var portalData in levelData.portals)
+		{
+			var portal = new Portal(portalData);
+			gameManager.grid.SetObject(portalData.position.x, portalData.position.y, portal);
+			gameManager.RegisterPortal(portal);
+		}
+
 		// Trigger logic in GameManager and notify listeners.
 		gameManager.TriggerLevelLoad(levelData);
 		OnLevelStarted?.Invoke(this, EventArgs.Empty);

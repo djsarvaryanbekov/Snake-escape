@@ -22,6 +22,9 @@ MonoBehaviour:
   - color: 0
     headPosition: {x: 0, y: 0}
     tailPosition: {x: 1, y: 0}
+  - color: 1
+    headPosition: {x: 2, y: 0}
+    tailPosition: {x: 3, y: 0}
   exits:
   - color: 0
     requiredLength: 3
@@ -41,3 +44,8 @@ MonoBehaviour:
   laserGates:
   - color: 0
     position: {x: 3, y: 5}
+  portals:
+  - colorId: 0
+    position: {x: 6, y: 6}
+  - colorId: 0
+    position: {x: 6, y: 5}

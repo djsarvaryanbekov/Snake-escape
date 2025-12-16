@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 // An enum to clearly identify which end of a snake is being referred to.
@@ -11,7 +12,7 @@ public enum SnakeEnd
 	Tail
 }
 
-// An enum to define the possible colors, used for game logic (special abilities, matching exits, etc.).
+// An enum to define the possible colors, used for game logic.
 public enum ColorType
 {
 	Red,
@@ -19,7 +20,6 @@ public enum ColorType
 	Blue,
 	Yellow,
 }
-
 
 public enum PlateColor
 {
@@ -56,6 +56,8 @@ public class GameManager : MonoBehaviour
 	private Dictionary<PlateColor, List<PressurePlate>> platesByColor = new Dictionary<PlateColor, List<PressurePlate>>();
 	private Dictionary<PlateColor, List<LaserGate>> gatesByColor = new Dictionary<PlateColor, List<LaserGate>>();
 
+	// Portal Tracking
+	private List<Portal> allPortals = new List<Portal>();
 
 	private void Awake()
 	{
@@ -71,9 +73,29 @@ public class GameManager : MonoBehaviour
 
 	public void TriggerLevelLoad(Level_SO data)
 	{
+		LinkPortals();
 		OnLevelLoaded?.Invoke(data);
-		// Perform an initial check after the level is fully set up.
 		UpdateAllPlateStates();
+	}
+
+	// --- PORTAL LOGIC ---
+	public void RegisterPortal(Portal portal)
+	{
+		allPortals.Add(portal);
+	}
+
+	private void LinkPortals()
+	{
+		var groupedPortals = allPortals.GroupBy(p => p.GetData().colorId);
+		foreach (var group in groupedPortals)
+		{
+			var portals = group.ToList();
+			if (portals.Count == 2)
+			{
+				portals[0].SetLinkedPortal(portals[1]);
+				portals[1].SetLinkedPortal(portals[0]);
+			}
+		}
 	}
 
 	public Snake GetSnakeAtPosition(Vector2Int gridPosition, out SnakeEnd partClicked)
@@ -95,13 +117,58 @@ public class GameManager : MonoBehaviour
 		return null;
 	}
 
+	// --- HELPERS FOR RESTORING STATIC OBJECTS ---
+
+	/// <summary>
+	/// Checks if a position holds a permanent static object (Plate, Gate, Portal)
+	/// and returns it. If not, returns a new EmptyCell.
+	/// Used to restore the grid after a dynamic object (Box/IceCube) moves away.
+	/// </summary>
+	private IGridObject GetBaseObjectAt(Vector2Int pos)
+	{
+		// 1. Check Plates
+		foreach (var kvp in platesByColor)
+		{
+			foreach (var plate in kvp.Value)
+			{
+				if (plate.GetData().position == pos) return plate;
+			}
+		}
+
+		// 2. Check Gates
+		foreach (var kvp in gatesByColor)
+		{
+			foreach (var gate in kvp.Value)
+			{
+				if (gate.GetData().position == pos) return gate;
+			}
+		}
+
+		// 3. Check Portals
+		foreach (var portal in allPortals)
+		{
+			if (portal.GetData().position == pos) return portal;
+		}
+
+		// Note: Exits and Walls are generally not walkable/overwritable by boxes 
+		// in the same way, or handled separately. If needed, add them here.
+
+		return new EmptyCell();
+	}
+
+	// --- MOVEMENT & GRID UPDATES ---
+
 	public void MoveBox(Vector2Int from, Vector2Int to)
 	{
 		IGridObject boxObject = grid.GetObject(from);
 		if (boxObject is Box)
 		{
-			grid.SetObject(from.x, from.y, new EmptyCell());
+			// Restore the base object at the 'from' position (e.g., if box was on a plate)
+			grid.SetObject(from.x, from.y, GetBaseObjectAt(from));
+
+			// Place box at new position (overwriting whatever base object is there logic-wise)
 			grid.SetObject(to.x, to.y, boxObject);
+
 			OnBoxMoved?.Invoke(from, to);
 			UpdateAllPlateStates();
 		}
@@ -112,8 +179,11 @@ public class GameManager : MonoBehaviour
 		IGridObject iceCube = grid.GetObject(from);
 		if (iceCube is IceCube)
 		{
-			grid.SetObject(from.x, from.y, new EmptyCell());
+			// Restore the base object at the 'from' position
+			grid.SetObject(from.x, from.y, GetBaseObjectAt(from));
+
 			grid.SetObject(to.x, to.y, iceCube);
+
 			OnIceCubeMoved?.Invoke(from, to);
 			UpdateAllPlateStates();
 		}
@@ -139,6 +209,8 @@ public class GameManager : MonoBehaviour
 			}
 			else
 			{
+				// Exit used and no snakes left -> effectively empty or base object?
+				// Exits are usually single-use, so EmptyCell is fine here.
 				grid.SetObject(exitPosition.x, exitPosition.y, new EmptyCell());
 			}
 			CheckForWinCondition();
@@ -149,7 +221,8 @@ public class GameManager : MonoBehaviour
 	{
 		if (eatenFruitData != null)
 		{
-			grid.SetObject(eatenFruitData.position.x, eatenFruitData.position.y, new EmptyCell());
+			// When fruit is eaten, restore potentially underlying objects (rare, but safe)
+			grid.SetObject(eatenFruitData.position.x, eatenFruitData.position.y, GetBaseObjectAt(eatenFruitData.position));
 			OnFruitEaten?.Invoke(eatenFruitData);
 		}
 	}
@@ -158,8 +231,12 @@ public class GameManager : MonoBehaviour
 	{
 		if (filler != Vector2Int.zero && hole != Vector2Int.zero)
 		{
-			grid.SetObject(filler.x, filler.y, new EmptyCell());
+			// Filler (Box/Ice) moves away from 'filler' pos -> Restore base object there
+			grid.SetObject(filler.x, filler.y, GetBaseObjectAt(filler));
+
+			// Hole is filled -> Becomes EmptyCell (walkable floor)
 			grid.SetObject(hole.x, hole.y, new EmptyCell());
+
 			OnHoleFilled?.Invoke(hole, filler);
 			UpdateAllPlateStates();
 		}
@@ -180,6 +257,7 @@ public class GameManager : MonoBehaviour
 		snakesOnLevel.Clear();
 		platesByColor.Clear();
 		gatesByColor.Clear();
+		allPortals.Clear();
 	}
 
 	public void ReportSnakeMoved() => UpdateAllPlateStates();
@@ -240,15 +318,24 @@ public class GameManager : MonoBehaviour
 				}
 
 				bool stateChanged = false;
-				if (allPlatesActive && !gate.IsOpen)
+				// LOGIC FIX:
+				// If All Plates Active -> Open Gate (unless already open)
+				if (allPlatesActive)
 				{
-					gate.Open();
-					stateChanged = true;
+					if (!gate.IsOpen)
+					{
+						gate.Open();
+						stateChanged = true;
+					}
 				}
-				else if (!allPlatesActive && gate.IsOpen && !isGateBlockedBySnake)
+				// If NOT All Plates Active -> Close Gate (unless blocked by snake)
+				else
 				{
-					gate.Close();
-					stateChanged = true;
+					if (gate.IsOpen && !isGateBlockedBySnake)
+					{
+						gate.Close();
+						stateChanged = true;
+					}
 				}
 
 				if (stateChanged)
@@ -261,7 +348,7 @@ public class GameManager : MonoBehaviour
 
 	private void UpdateAllPlateStates()
 	{
-		if (platesByColor.Count == .0) return;
+		if (platesByColor.Count == 0) return;
 
 		foreach (var color in platesByColor.Keys)
 		{
@@ -270,6 +357,7 @@ public class GameManager : MonoBehaviour
 				Vector2Int platePos = plate.GetData().position;
 				bool isNowActive = false;
 
+				// 1. Check Snakes
 				foreach (var snake in snakesOnLevel)
 				{
 					foreach (var segment in snake.Body)
@@ -283,6 +371,7 @@ public class GameManager : MonoBehaviour
 					if (isNowActive) break;
 				}
 
+				// 2. Check Objects on Grid (Boxes/IceCubes)
 				if (!isNowActive)
 				{
 					var objOnGrid = grid.GetObject(platePos);
@@ -301,6 +390,11 @@ public class GameManager : MonoBehaviour
 					plate.Deactivate();
 				}
 			}
+			
+		}
+		foreach (var color in gatesByColor.Keys)
+		{
+			CheckPlateSystem(color);
 		}
 	}
 }

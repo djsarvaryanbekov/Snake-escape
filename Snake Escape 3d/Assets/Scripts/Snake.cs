@@ -2,12 +2,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 /// <summary>
 /// Represents the logical state and behavior of a single snake.
-/// This class handles all game rules related to snake movement, growth, and interaction.
-/// It has no knowledge of visuals; it only manages data and triggers events.
 /// </summary>
 public class Snake
 {
@@ -23,8 +22,10 @@ public class Snake
 	private List<Vector2Int> snakeBody = new List<Vector2Int>();
 	private ColorType snakeColor;
 	private SnakeVisualizer visualizer;
-	private Vector2Int preWrapTarget;
-	private Vector2Int lastValidIceCubePos;
+
+	// State variables for complex moves
+	private Vector2Int _preWrapTarget;
+	private Vector2Int _lastValidIceCubePos;
 
 	// --- PUBLIC PROPERTIES ---
 	public IReadOnlyList<Vector2Int> Body => snakeBody;
@@ -47,7 +48,8 @@ public class Snake
 		}
 	}
 
-	// --- CORE LOGIC ---
+	// --- CORE MOVEMENT LOGIC ---
+
 	public void TryMoveTo(Vector2Int targetPosition, SnakeEnd endToMove)
 	{
 		if (visualizer != null && visualizer.IsAnimating)
@@ -56,23 +58,18 @@ public class Snake
 			return;
 		}
 
+		// Red Snake Ability: Moving by Tail
 		if (endToMove == SnakeEnd.Tail && this.snakeColor != ColorType.Red)
 		{
 			OnMoveFailed?.Invoke(this, new OnMoveFailedEventArgs { reason = MoveFailureReason.CantMoveTail });
 			return;
 		}
 
+		// Green Snake Ability: Wrapping
 		if (this.snakeColor == ColorType.Green)
 		{
-			var grid = GameManager.Instance.grid;
-			int gridWidth = grid.GetWidth();
-			int gridHeight = grid.GetHeight();
-			preWrapTarget = targetPosition;
-
-			if (targetPosition.x < 0) targetPosition.x = gridWidth - 1;
-			if (targetPosition.x >= gridWidth) targetPosition.x = 0;
-			if (targetPosition.y < 0) targetPosition.y = gridHeight - 1;
-			if (targetPosition.y >= gridHeight) targetPosition.y = 0;
+			_preWrapTarget = targetPosition;
+			HandleWrappingIndices(ref targetPosition);
 		}
 
 		if (IsValidMove(targetPosition, endToMove))
@@ -85,200 +82,243 @@ public class Snake
 		}
 	}
 
+	private void HandleWrappingIndices(ref Vector2Int pos)
+	{
+		var grid = GameManager.Instance.grid;
+		int w = grid.GetWidth();
+		int h = grid.GetHeight();
+
+		if (pos.x < 0) pos.x = w - 1;
+		else if (pos.x >= w) pos.x = 0;
+
+		if (pos.y < 0) pos.y = h - 1;
+		else if (pos.y >= h) pos.y = 0;
+	}
+
 	private bool IsValidMove(Vector2Int targetPosition, SnakeEnd endToMove)
 	{
 		Vector2Int startPosition = (endToMove == SnakeEnd.Head) ? GetHeadPosition() : GetTailPosition();
 
-		if (snakeColor != ColorType.Green && Mathf.Abs(targetPosition.x - startPosition.x) + Mathf.Abs(targetPosition.y - startPosition.y) != 1)
+		// 1. Adjacency Check
+		if (snakeColor != ColorType.Green)
 		{
-			return false;
+			if (Mathf.Abs(targetPosition.x - startPosition.x) + Mathf.Abs(targetPosition.y - startPosition.y) != 1) return false;
 		}
 
+		// 2. Collision with Snakes
 		foreach (var snake in GameManager.Instance.snakesOnLevel)
 		{
 			foreach (var segment in snake.Body)
 			{
-				if (targetPosition == segment)
-				{
-					return false;
-				}
+				if (targetPosition == segment) return false;
 			}
 		}
 
 		IGridObject targetObject = GameManager.Instance.grid.GetObject(targetPosition);
 
-		// --- BOX PUSH LOGIC ---
+		// 3. Portal Logic
+		if (targetObject is Portal portal)
+		{
+			// NEW RULE: Tail cannot enter portals. Behave like Wall.
+			if (endToMove == SnakeEnd.Tail) return false;
+
+			Portal linked = portal.GetLinkedPortal();
+			if (linked != null)
+			{
+				Vector2Int portalExitPos = linked.GetData().position;
+				// Recursive check at the exit point
+				return IsLocationValidForEntry(portalExitPos, endToMove);
+			}
+		}
+
+		// 4. Box Push Logic
 		if (targetObject is Box)
 		{
 			if (endToMove == SnakeEnd.Tail) return false;
-
-			var grid = GameManager.Instance.grid;
-			int gridWidth = grid.GetWidth();
-			int gridHeight = grid.GetHeight();
-			Vector2Int pushDirection;
-
-			if (snakeColor == ColorType.Green)
-				pushDirection = GetToroidalUnitDirection(startPosition, preWrapTarget, gridWidth, gridHeight);
-			else
-				pushDirection = new Vector2Int(Mathf.Clamp(targetPosition.x - startPosition.x, -1, 1), Mathf.Clamp(targetPosition.y - startPosition.y, -1, 1));
-
-			if (pushDirection == Vector2Int.zero) return false;
-
-			Vector2Int boxTarget = targetPosition + pushDirection;
-
-			IGridObject objectBehindBox = grid.GetObject(boxTarget);
-
-			// --- BUG FIX ---: Gates block boxes, even when open.
-			if (objectBehindBox is LaserGate)
-			{
-				return false;
-			}
-
-			foreach (var snake in GameManager.Instance.snakesOnLevel)
-			{
-				foreach (var segment in snake.Body)
-				{
-					if (boxTarget == segment) return false;
-				}
-			}
-
-			if (objectBehindBox is EmptyCell || objectBehindBox is PressurePlate) return true;
-			if (objectBehindBox is Hole) return true;
-
-			return false;
+			return CanPushBox(startPosition, targetPosition);
 		}
 
-		// --- ICE CUBE SLIDE LOGIC ---
+		// 5. Ice Cube Slide Logic
 		if (targetObject is IceCube)
 		{
 			if (endToMove == SnakeEnd.Tail) return false;
-
-			var grid = GameManager.Instance.grid;
-			int gridWidth = grid.GetWidth();
-			int gridHeight = grid.GetHeight();
-			Vector2Int pushDirection;
-
-			if (snakeColor == ColorType.Green)
-				pushDirection = GetToroidalUnitDirection(startPosition, preWrapTarget, gridWidth, gridHeight);
-			else
-				pushDirection = new Vector2Int(Mathf.Clamp(targetPosition.x - startPosition.x, -1, 1), Mathf.Clamp(targetPosition.y - startPosition.y, -1, 1));
-
-			if (pushDirection == Vector2Int.zero) return false;
-
-			Vector2Int finalPosition = targetPosition;
-			while (true)
-			{
-				Vector2Int nextPosition = finalPosition + pushDirection;
-				if (nextPosition.x < 0 || nextPosition.x >= gridWidth || nextPosition.y < 0 || nextPosition.y >= gridHeight) break;
-
-				bool snakeOnCell = false;
-				foreach (var snake in GameManager.Instance.snakesOnLevel)
-				{
-					foreach (var segment in snake.Body)
-					{
-						if (nextPosition == segment)
-						{
-							snakeOnCell = true;
-							break;
-						}
-					}
-					if (snakeOnCell) break;
-				}
-				if (snakeOnCell) break;
-
-				IGridObject objectAtNextPos = grid.GetObject(nextPosition);
-
-				// --- BUG FIX ---: Gates block ice cubes, even when open.
-				if (objectAtNextPos is LaserGate)
-				{
-					break; // Stop the slide
-				}
-
-				if (objectAtNextPos is EmptyCell || objectAtNextPos is PressurePlate)
-				{
-					finalPosition = nextPosition;
-				}
-				else if (objectAtNextPos is Hole)
-				{
-					finalPosition = nextPosition;
-					break;
-				}
-				else
-				{
-					break;
-				}
-			}
-
-			if (finalPosition == targetPosition) return false;
-			lastValidIceCubePos = finalPosition;
-			return true;
+			return CanSlideIceCube(startPosition, targetPosition);
 		}
 
 		return targetObject.CanSnakeInteract(this, endToMove);
 	}
 
-	private void PerformMove(Vector2Int newPosition, SnakeEnd endToMove)
+	/// <summary>
+	/// Checks if the destination of a portal is valid.
+	/// </summary>
+	private bool IsLocationValidForEntry(Vector2Int pos, SnakeEnd end)
 	{
-		IGridObject initialTargetObject = GameManager.Instance.grid.GetObject(newPosition);
+		foreach (var snake in GameManager.Instance.snakesOnLevel)
+			if (snake.Body.Contains(pos)) return false;
+
+		IGridObject obj = GameManager.Instance.grid.GetObject(pos);
+
+		if (obj is Wall) return false;
+		if (obj is Box || obj is IceCube) return false;
+		if (obj is LaserGate gate && !gate.IsOpen) return false;
+
+		return obj.CanSnakeInteract(this, end);
+	}
+
+	private bool CanPushBox(Vector2Int from, Vector2Int toBox)
+	{
+		var grid = GameManager.Instance.grid;
+		Vector2Int pushDir = GetPushDirection(from, toBox);
+		if (pushDir == Vector2Int.zero) return false;
+
+		Vector2Int landPos = toBox + pushDir;
+
+		// Box entering Portal
+		if (grid.GetObject(landPos) is Portal p && p.GetLinkedPortal() != null)
+		{
+			landPos = p.GetLinkedPortal().GetData().position;
+		}
+
+		// Validation behind box/at portal exit
+		foreach (var s in GameManager.Instance.snakesOnLevel)
+			if (s.Body.Contains(landPos)) return false;
+
+		IGridObject objBehind = grid.GetObject(landPos);
+		if (objBehind is Wall || objBehind is Box || objBehind is IceCube) return false;
+		if (objBehind is LaserGate gate && !gate.IsOpen) return false;
+
+		if (objBehind is Hole) return true;
+
+		return objBehind.CanSnakeInteract(this, SnakeEnd.Head);
+	}
+
+	private bool CanSlideIceCube(Vector2Int from, Vector2Int toCube)
+	{
+		var grid = GameManager.Instance.grid;
+		Vector2Int pushDir = GetPushDirection(from, toCube);
+		if (pushDir == Vector2Int.zero) return false;
+
+		Vector2Int currentPos = toCube;
+		Vector2Int nextPos = currentPos + pushDir;
+
+		int safety = 0;
+		while (safety < 100)
+		{
+			safety++;
+
+			// Ice Cube entering Portal
+			if (grid.GetObject(nextPos) is Portal p && p.GetLinkedPortal() != null)
+			{
+				Vector2Int exitPos = p.GetLinkedPortal().GetData().position;
+
+				if (IsBlockedForIceCube(exitPos))
+				{
+					_lastValidIceCubePos = currentPos;
+					return _lastValidIceCubePos != toCube;
+				}
+
+				currentPos = exitPos;
+				nextPos = currentPos + pushDir;
+				continue;
+			}
+
+			if (IsBlockedForIceCube(nextPos))
+			{
+				_lastValidIceCubePos = currentPos;
+				return true;
+			}
+
+			if (grid.GetObject(nextPos) is Hole)
+			{
+				_lastValidIceCubePos = nextPos;
+				return true;
+			}
+
+			currentPos = nextPos;
+			nextPos = currentPos + pushDir;
+		}
+
+		return false;
+	}
+
+	private bool IsBlockedForIceCube(Vector2Int pos)
+	{
+		var grid = GameManager.Instance.grid;
+		if (pos.x < 0 || pos.x >= grid.GetWidth() || pos.y < 0 || pos.y >= grid.GetHeight()) return true;
+
+		foreach (var s in GameManager.Instance.snakesOnLevel)
+			if (s.Body.Contains(pos)) return true;
+
+		IGridObject obj = grid.GetObject(pos);
+		if (obj is Wall || obj is Box || obj is IceCube) return true;
+		if (obj is LaserGate gate && !gate.IsOpen) return true;
+
+		return false;
+	}
+
+	private void PerformMove(Vector2Int targetPosition, SnakeEnd endToMove)
+	{
 		var grid = GameManager.Instance.grid;
 
-		if (initialTargetObject is Box)
+		// 1. Portal Teleportation Check for Head
+		IGridObject targetObj = grid.GetObject(targetPosition);
+		if (targetObj is Portal portal && portal.GetLinkedPortal() != null)
 		{
-			int gridWidth = grid.GetWidth();
-			int gridHeight = grid.GetHeight();
+			// We already checked in IsValidMove that endToMove is NOT Tail.
+			targetPosition = portal.GetLinkedPortal().GetData().position;
+			targetObj = grid.GetObject(targetPosition);
+		}
+
+		// 2. Interaction Logic (Box/IceCube)
+		if (targetObj is Box)
+		{
 			Vector2Int startPosition = (endToMove == SnakeEnd.Head) ? GetHeadPosition() : GetTailPosition();
-			Vector2Int pushDirection;
-			if (snakeColor == ColorType.Green)
-				pushDirection = GetToroidalUnitDirection(startPosition, preWrapTarget, gridWidth, gridHeight);
-			else
-				pushDirection = new Vector2Int(Mathf.Clamp(newPosition.x - startPosition.x, -1, 1), Mathf.Clamp(newPosition.y - startPosition.y, -1, 1));
-			Vector2Int boxTargetPosition = newPosition + pushDirection;
+			Vector2Int pushDir = GetPushDirection(startPosition, targetPosition);
 
-			if (grid.GetObject(boxTargetPosition) is Hole)
-				GameManager.Instance.FillHole(boxTargetPosition, newPosition);
-			else
-				GameManager.Instance.MoveBox(newPosition, boxTargetPosition);
-
-			initialTargetObject = grid.GetObject(newPosition);
-		}
-
-		if (initialTargetObject is IceCube)
-		{
-			if (grid.GetObject(lastValidIceCubePos) is Hole)
-				GameManager.Instance.FillHole(lastValidIceCubePos, newPosition);
-			else
-				GameManager.Instance.MoveIceCube(newPosition, lastValidIceCubePos);
-
-			initialTargetObject = grid.GetObject(newPosition);
-		}
-
-		bool willGrow = initialTargetObject is Fruit;
-		if (willGrow)
-		{
-			if (endToMove == SnakeEnd.Head) snakeBody.Insert(0, newPosition);
-			else snakeBody.Add(newPosition);
-			OnGrew?.Invoke();
-		}
-		else
-		{
-			if (endToMove == SnakeEnd.Head)
+			Vector2Int boxTarget = targetPosition + pushDir;
+			if (grid.GetObject(boxTarget) is Portal p && p.GetLinkedPortal() != null)
 			{
-				snakeBody.RemoveAt(snakeBody.Count - 1);
-				snakeBody.Insert(0, newPosition);
+				boxTarget = p.GetLinkedPortal().GetData().position;
 			}
+
+			if (grid.GetObject(boxTarget) is Hole) GameManager.Instance.FillHole(boxTarget, targetPosition);
+			else GameManager.Instance.MoveBox(targetPosition, boxTarget);
+
+			targetObj = grid.GetObject(targetPosition);
+		}
+		else if (targetObj is IceCube)
+		{
+			if (grid.GetObject(_lastValidIceCubePos) is Hole)
+				GameManager.Instance.FillHole(_lastValidIceCubePos, targetPosition);
 			else
-			{
-				snakeBody.RemoveAt(0);
-				snakeBody.Add(newPosition);
-			}
-			OnMoved?.Invoke();
+				GameManager.Instance.MoveIceCube(targetPosition, _lastValidIceCubePos);
+
+			targetObj = grid.GetObject(targetPosition);
 		}
 
-		initialTargetObject.OnSnakeEntered(this, endToMove);
+		// 3. Update Body Position
+		bool willGrow = targetObj is Fruit;
+
+		if (endToMove == SnakeEnd.Head)
+		{
+			snakeBody.Insert(0, targetPosition);
+			if (!willGrow) snakeBody.RemoveAt(snakeBody.Count - 1);
+		}
+		else // Tail Move (Red Snake)
+		{
+			snakeBody.Add(targetPosition);
+			if (!willGrow) snakeBody.RemoveAt(0);
+		}
+
+		if (willGrow) OnGrew?.Invoke();
+		else OnMoved?.Invoke();
+
+		targetObj.OnSnakeEntered(this, endToMove);
 		GameManager.Instance.ReportSnakeMoved();
 	}
 
 	// --- UTILITY METHODS ---
+
 	public void RemoveFromGame()
 	{
 		snakeBody.Clear();
@@ -288,21 +328,25 @@ public class Snake
 	public Vector2Int GetHeadPosition() => snakeBody.Count > 0 ? snakeBody[0] : Vector2Int.zero;
 	public Vector2Int GetTailPosition() => snakeBody.Count > 0 ? snakeBody[snakeBody.Count - 1] : Vector2Int.zero;
 
+	private Vector2Int GetPushDirection(Vector2Int from, Vector2Int to)
+	{
+		if (snakeColor == ColorType.Green)
+		{
+			int w = GameManager.Instance.grid.GetWidth();
+			int h = GameManager.Instance.grid.GetHeight();
+			return GetToroidalUnitDirection(from, _preWrapTarget, w, h);
+		}
+		return new Vector2Int(Mathf.Clamp(to.x - from.x, -1, 1), Mathf.Clamp(to.y - from.y, -1, 1));
+	}
+
 	private Vector2Int GetToroidalUnitDirection(Vector2Int start, Vector2Int target, int gridWidth, int gridHeight)
 	{
 		int dx = target.x - start.x;
-		if (Mathf.Abs(dx) > gridWidth / 2)
-			dx = dx > 0 ? dx - gridWidth : dx + gridWidth;
+		if (Mathf.Abs(dx) > gridWidth / 2) dx = dx > 0 ? dx - gridWidth : dx + gridWidth;
 
 		int dy = target.y - start.y;
-		if (Mathf.Abs(dy) > gridHeight / 2)
-			dy = dy > 0 ? dy - gridHeight : dy + gridHeight;
+		if (Mathf.Abs(dy) > gridHeight / 2) dy = dy > 0 ? dy - gridHeight : dy + gridHeight;
 
-		dx = Mathf.Clamp(dx, -1, 1);
-		dy = Mathf.Clamp(dy, -1, 1);
-
-		if (Mathf.Abs(dx) + Mathf.Abs(dy) != 1) return Vector2Int.zero;
-
-		return new Vector2Int(dx, dy);
+		return new Vector2Int(Mathf.Clamp(dx, -1, 1), Mathf.Clamp(dy, -1, 1));
 	}
 }

@@ -239,3 +239,40 @@ public class LaserGate : IGridObject
 	public void Open() => IsOpen = true;
 	public void Close() => IsOpen = false;
 }
+
+
+/// <summary>
+/// Represents a teleporter.
+/// </summary>
+public class Portal : IGridObject
+{
+	private readonly PortalData data;
+	private Portal linkedPortal;
+
+	public Portal(PortalData data) { this.data = data; }
+
+	/// <summary>
+	/// Links this portal to another portal (its destination).
+	/// </summary>
+	public void SetLinkedPortal(Portal other)
+	{
+		this.linkedPortal = other;
+	}
+
+	public Portal GetLinkedPortal() => linkedPortal;
+	public PortalData GetData() => data;
+
+	// Portals themselves are walkable. The actual teleport logic happens in Snake.cs
+	// before the snake officially "enters" the cell to check if the destination is free.
+	public bool CanSnakeInteract(Snake snake, SnakeEnd end)
+	{
+		return true;
+	}
+
+	// Because Snake.cs handles the position update before calling OnSnakeEntered,
+	// checking if we need to teleport happens there.
+	public void OnSnakeEntered(Snake snake, SnakeEnd end)
+	{
+		// Logic handled in Snake.PerformMove via coordinate mapping
+	}
+}

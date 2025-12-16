@@ -75,3 +75,20 @@ public class LaserGateData
 	public PlateColor color;
 	public Vector2Int position;
 }
+
+
+// --- NEW SECTIONS ---
+
+public enum PortalColor
+{
+	Orange,
+	Cyan,
+	Magenta
+}
+
+[System.Serializable]
+public class PortalData
+{
+	public PortalColor colorId; // Portals with the same ColorID are linked
+	public Vector2Int position;
+}

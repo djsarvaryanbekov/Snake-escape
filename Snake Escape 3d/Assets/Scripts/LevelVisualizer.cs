@@ -20,6 +20,7 @@ public class LevelVisualizer : MonoBehaviour
 	[SerializeField] private GameObject boxPrefab;
 	[SerializeField] private GameObject iceCubePrefab;
 	[SerializeField] private GameObject holePrefab;
+	[SerializeField] private GameObject portalPrefab;
 	//[SerializeField] private GameObject pressurePlatePrefab; // Optional: for visual plates
 	[SerializeField] private GameObject laserGatePrefab;
 	// In the [Header("Prefabs")] section
@@ -52,6 +53,7 @@ public class LevelVisualizer : MonoBehaviour
 	private Dictionary<Vector2Int, GameObject> spawnedLaserGates = new Dictionary<Vector2Int, GameObject>();
 	// With the other dictionary declarations
 	private Dictionary<Vector2Int, GameObject> spawnedPlates = new Dictionary<Vector2Int, GameObject>();
+	private Dictionary<Vector2Int, GameObject> spawnedPortals = new Dictionary<Vector2Int, GameObject>();
 
 
 	/// <summary>
@@ -177,6 +179,29 @@ public class LevelVisualizer : MonoBehaviour
 			GameObject gateGO = Instantiate(laserGatePrefab, worldPos, Quaternion.identity, levelObjectsParent);
 			spawnedLaserGates[gateData.position] = gateGO;
 		}
+		foreach (var portalData in levelData.portals)
+		{
+			Vector3 worldPos = grid.GetWorldPositionOfCellCenter(portalData.position.x, portalData.position.y);
+			// Slightly offset Y if needed to prevent z-fighting with floor, or keep at 0
+			worldPos.y = 0.01f;
+
+			GameObject portalGO = Instantiate(portalPrefab, worldPos, Quaternion.identity, levelObjectsParent);
+
+			// Color the portal based on ID
+			var renderer = portalGO.GetComponentInChildren<Renderer>();
+			if (renderer != null)
+			{
+				Color c = Color.white;
+				switch (portalData.colorId)
+				{
+					case PortalColor.Orange: c = new Color(1f, 0.5f, 0f); break; // Orange
+					case PortalColor.Cyan: c = Color.cyan; break;
+					case PortalColor.Magenta: c = Color.magenta; break;
+				}
+				renderer.material.color = c;
+			}
+			spawnedPortals[portalData.position] = portalGO;
+		}
 	}
 
 	// --- EVENT HANDLERS ---
@@ -292,7 +317,7 @@ public class LevelVisualizer : MonoBehaviour
 		spawnedHoles.Clear();
 		spawnedIceCubes.Clear();
 		spawnedLaserGates.Clear();
-
+		spawnedPortals.Clear();
 		spawnedPlates.Clear();
 	}
 
