@@ -214,6 +214,7 @@ public class Snake
 				if (IsBlockedForIceCube(exitPos))
 				{
 					_lastValidIceCubePos = currentPos;
+					// FIX: Only return true if we actually moved from the start
 					return _lastValidIceCubePos != toCube;
 				}
 
@@ -225,7 +226,8 @@ public class Snake
 			if (IsBlockedForIceCube(nextPos))
 			{
 				_lastValidIceCubePos = currentPos;
-				return true;
+				// FIX: Only return true if we actually moved from the start
+				return _lastValidIceCubePos != toCube;
 			}
 
 			if (grid.GetObject(nextPos) is Hole)
@@ -288,12 +290,16 @@ public class Snake
 		}
 		else if (targetObj is IceCube)
 		{
-			if (grid.GetObject(_lastValidIceCubePos) is Hole)
-				GameManager.Instance.FillHole(_lastValidIceCubePos, targetPosition);
-			else
-				GameManager.Instance.MoveIceCube(targetPosition, _lastValidIceCubePos);
+			// Double check: if lastValidPos is the same as current, we shouldn't be here, but good to be safe.
+			if (_lastValidIceCubePos != targetPosition)
+			{
+				if (grid.GetObject(_lastValidIceCubePos) is Hole)
+					GameManager.Instance.FillHole(_lastValidIceCubePos, targetPosition);
+				else
+					GameManager.Instance.MoveIceCube(targetPosition, _lastValidIceCubePos);
 
-			targetObj = grid.GetObject(targetPosition);
+				targetObj = grid.GetObject(targetPosition);
+			}
 		}
 
 		// 3. Update Body Position
