@@ -18,6 +18,9 @@ MonoBehaviour:
   - {x: 8, y: 8}
   wallPositions:
   - {x: 7, y: 7}
+  - {x: 9, y: 9}
+  - {x: 9, y: 8}
+  - {x: 9, y: 7}
   snakes:
   - color: 0
     headPosition: {x: 0, y: 0}
@@ -25,15 +28,28 @@ MonoBehaviour:
   - color: 1
     headPosition: {x: 2, y: 0}
     tailPosition: {x: 3, y: 0}
+  - color: 2
+    headPosition: {x: 4, y: 0}
+    tailPosition: {x: 5, y: 0}
   exits:
   - color: 0
     requiredLength: 3
     position: {x: 2, y: 2}
+  - color: 1
+    requiredLength: 2
+    position: {x: 2, y: 3}
+  - color: 2
+    requiredLength: 3
+    position: {x: 2, y: 4}
   fruits:
   - colors: 00000000
     position: {x: 4, y: 4}
   - colors: 00000000
     position: {x: 5, y: 5}
+  - colors: 01000000
+    position: {x: 5, y: 6}
+  - colors: 02000000
+    position: {x: 5, y: 7}
   iceCubePositions:
   - {x: 7, y: 8}
   holePositions:
