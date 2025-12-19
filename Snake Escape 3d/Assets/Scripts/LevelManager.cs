@@ -1,4 +1,4 @@
-// --- LevelManager.cs ---
+// --- REPLACE ENTIRE FILE: LevelManager.cs ---
 
 using System;
 using System.Collections.Generic;
@@ -47,25 +47,25 @@ public class LevelManager : MonoBehaviour
 		Level_SO levelData = allLevels[index];
 		Vector3 originPosition = gridPosition.transform.position;
 
-		// 1. Create the grid (it's pre-filled with EmptyCell objects).
+		// 1. Create the grid (it initializes with EmptyCells automatically).
 		gameManager.grid = new Grid(levelData.width, levelData.height, cellSize, originPosition);
 
 		// 2. Place Wall objects.
 		foreach (var wallPos in levelData.wallPositions)
 		{
-			gameManager.grid.SetObject(wallPos.x, wallPos.y, new Wall());
+			gameManager.grid.AddObject(wallPos.x, wallPos.y, new Wall());
 		}
 
 		// 3. Create and place Exit objects.
 		foreach (var exitData in levelData.exits)
 		{
-			gameManager.grid.SetObject(exitData.position.x, exitData.position.y, new Exit(exitData));
+			gameManager.grid.AddObject(exitData.position.x, exitData.position.y, new Exit(exitData));
 		}
 
 		// 4. Create and place Fruit objects.
 		foreach (var fruitData in levelData.fruits)
 		{
-			gameManager.grid.SetObject(fruitData.position.x, fruitData.position.y, new Fruit(fruitData));
+			gameManager.grid.AddObject(fruitData.position.x, fruitData.position.y, new Fruit(fruitData));
 		}
 
 		// 5. Create and place Snake logic and visualizers.
@@ -95,26 +95,26 @@ public class LevelManager : MonoBehaviour
 		// 6. Create and place Box objects.
 		foreach (var boxPosition in levelData.boxPositions)
 		{
-			gameManager.grid.SetObject(boxPosition.x, boxPosition.y, new Box());
+			gameManager.grid.AddObject(boxPosition.x, boxPosition.y, new Box());
 		}
 
 		// 7. Create and place IceCube objects.
 		foreach (var iceCubePosition in levelData.iceCubePositions)
 		{
-			gameManager.grid.SetObject(iceCubePosition.x, iceCubePosition.y, new IceCube());
+			gameManager.grid.AddObject(iceCubePosition.x, iceCubePosition.y, new IceCube());
 		}
 
 		// 8. Create and place Hole objects.
 		foreach (var holePosition in levelData.holePositions)
 		{
-			gameManager.grid.SetObject(holePosition.x, holePosition.y, new Hole());
+			gameManager.grid.AddObject(holePosition.x, holePosition.y, new Hole());
 		}
 
 		// 9. Create and place Pressure Plate objects.
 		foreach (var plateData in levelData.pressurePlates)
 		{
 			var plate = new PressurePlate(plateData);
-			gameManager.grid.SetObject(plateData.position.x, plateData.position.y, plate);
+			gameManager.grid.AddObject(plateData.position.x, plateData.position.y, plate);
 			gameManager.RegisterPlate(plate, plateData);
 		}
 
@@ -122,15 +122,15 @@ public class LevelManager : MonoBehaviour
 		foreach (var gateData in levelData.laserGates)
 		{
 			var gate = new LaserGate(gateData);
-			gameManager.grid.SetObject(gateData.position.x, gateData.position.y, gate);
+			gameManager.grid.AddObject(gateData.position.x, gateData.position.y, gate);
 			gameManager.RegisterGate(gate, gateData);
 		}
 
-		// 11. Create and place Portal objects (NEW).
+		// 11. Create and place Portal objects.
 		foreach (var portalData in levelData.portals)
 		{
 			var portal = new Portal(portalData);
-			gameManager.grid.SetObject(portalData.position.x, portalData.position.y, portal);
+			gameManager.grid.AddObject(portalData.position.x, portalData.position.y, portal);
 			gameManager.RegisterPortal(portal);
 		}
 

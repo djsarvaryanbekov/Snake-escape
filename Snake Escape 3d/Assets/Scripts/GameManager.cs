@@ -1,400 +1,245 @@
-// --- REPLACE ENTIRE FILE: GameManager.cs ---
-
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-// An enum to clearly identify which end of a snake is being referred to.
-public enum SnakeEnd
-{
-	Head,
-	Tail
-}
+public enum SnakeEnd { Head, Tail }
+public enum ColorType { Red, Green, Blue, Yellow }
+public enum PlateColor { Yellow, Purple, Orange }
 
-// An enum to define the possible colors, used for game logic.
-public enum ColorType
-{
-	Red,
-	Green,
-	Blue,
-	Yellow,
-}
-
-public enum PlateColor
-{
-	Yellow,
-	Purple,
-	Orange
-}
-
-/// <summary>
-/// The central singleton for managing game state, rules, and events.
-/// </summary>
 public class GameManager : MonoBehaviour
 {
-	// --- SINGLETON PATTERN ---
-	public static GameManager Instance { get; private set; }
+    public static GameManager Instance { get; private set; }
+    
+    // Events
+    public event EventHandler LevelWin;
+    public event EventHandler ReloadLevel;
+    public event Action<Level_SO> OnLevelLoaded;
+    public event Action<FruitData> OnFruitEaten;
+    public event Action<FruitData> OnFruitSpawned;
+    public event Action<Vector2Int> OnExitRemoved;
+    public event Action<Vector2Int, Vector2Int> OnBoxMoved;
+    public event Action<Vector2Int, Vector2Int> OnIceCubeMoved;
+    public event Action<Vector2Int, Vector2Int> OnHoleFilled;
+    public event Action<PressurePlateData, bool> OnPlateStateChanged;
+    public event Action<LaserGateData, bool> OnGateStateChanged;
 
-	// --- EVENTS ---
-	public event EventHandler LevelWin;
-	public event EventHandler ReloadLevel;
-	public event Action<Level_SO> OnLevelLoaded;
-	public event Action<FruitData> OnFruitEaten;
-	public event Action<FruitData> OnFruitSpawned;
-	public event Action<Vector2Int> OnExitRemoved;
-	public event Action<Vector2Int, Vector2Int> OnBoxMoved;
-	public event Action<Vector2Int, Vector2Int> OnIceCubeMoved;
-	public event Action<Vector2Int, Vector2Int> OnHoleFilled;
-	public event Action<PressurePlateData, bool> OnPlateStateChanged; // true = active, false = inactive
-	public event Action<LaserGateData, bool> OnGateStateChanged; // true = open, false = close
+    [HideInInspector] public Grid grid { get; set; }
+    [HideInInspector] public List<Snake> snakesOnLevel { get; private set; } = new List<Snake>();
 
-	// --- PUBLIC STATE ---
-	[HideInInspector] public Grid grid { get; set; }
-	[HideInInspector] public List<Snake> snakesOnLevel { get; private set; } = new List<Snake>();
+    private Dictionary<PlateColor, List<PressurePlate>> platesByColor = new Dictionary<PlateColor, List<PressurePlate>>();
+    private Dictionary<PlateColor, List<LaserGate>> gatesByColor = new Dictionary<PlateColor, List<LaserGate>>();
+    private List<Portal> allPortals = new List<Portal>();
 
-	private Dictionary<PlateColor, List<PressurePlate>> platesByColor = new Dictionary<PlateColor, List<PressurePlate>>();
-	private Dictionary<PlateColor, List<LaserGate>> gatesByColor = new Dictionary<PlateColor, List<LaserGate>>();
+    private void Awake()
+    {
+        if (Instance != null && Instance != this) Destroy(gameObject);
+        else Instance = this;
+    }
 
-	// Portal Tracking
-	private List<Portal> allPortals = new List<Portal>();
+    public void TriggerLevelLoad(Level_SO data)
+    {
+        LinkPortals();
+        OnLevelLoaded?.Invoke(data);
+        UpdateAllPlateStates();
+    }
 
-	private void Awake()
-	{
-		if (Instance != null && Instance != this)
-		{
-			Destroy(this.gameObject);
-		}
-		else
-		{
-			Instance = this;
-		}
-	}
+    public void RegisterPlate(PressurePlate plate, PressurePlateData data)
+    {
+        if (!platesByColor.ContainsKey(data.color)) platesByColor[data.color] = new List<PressurePlate>();
+        platesByColor[data.color].Add(plate);
+        plate.OnPlateTriggered += HandlePlateTrigger;
+    }
 
-	public void TriggerLevelLoad(Level_SO data)
-	{
-		LinkPortals();
-		OnLevelLoaded?.Invoke(data);
-		UpdateAllPlateStates();
-	}
+    public void RegisterGate(LaserGate gate, LaserGateData data)
+    {
+        if (!gatesByColor.ContainsKey(data.color)) gatesByColor[data.color] = new List<LaserGate>();
+        gatesByColor[data.color]. Add(gate);
+    }
 
-	// --- PORTAL LOGIC ---
-	public void RegisterPortal(Portal portal)
-	{
-		allPortals.Add(portal);
-	}
+    private void HandlePlateTrigger(PressurePlate plate, bool active)
+    {
+        PlateColor color = plate.GetData().color;
+        OnPlateStateChanged?.Invoke(plate. GetData(), active);
+        CheckGateSystem(color);
+    }
 
-	private void LinkPortals()
-	{
-		var groupedPortals = allPortals.GroupBy(p => p.GetData().colorId);
-		foreach (var group in groupedPortals)
-		{
-			var portals = group.ToList();
-			if (portals.Count == 2)
-			{
-				portals[0].SetLinkedPortal(portals[1]);
-				portals[1].SetLinkedPortal(portals[0]);
-			}
-		}
-	}
+    /// <summary>
+    /// SIMPLIFIED GATE LOGIC: 
+    /// - If ALL plates are pressed → OPEN
+    /// - Otherwise → CLOSED
+    /// - NO blocking checks - open gates act like empty cells regardless! 
+    /// </summary>
+    private void CheckGateSystem(PlateColor color)
+    {
+        if (!platesByColor.ContainsKey(color)) return;
+        
+        // Check if ALL plates of this color are pressed
+        bool allPlatesActive = platesByColor[color].All(p => p.IsActive);
 
-	public Snake GetSnakeAtPosition(Vector2Int gridPosition, out SnakeEnd partClicked)
-	{
-		foreach (var snake in snakesOnLevel)
-		{
-			if (gridPosition == snake.GetHeadPosition())
-			{
-				partClicked = SnakeEnd.Head;
-				return snake;
-			}
-			if (gridPosition == snake.GetTailPosition())
-			{
-				partClicked = SnakeEnd.Tail;
-				return snake;
-			}
-		}
-		partClicked = default;
-		return null;
-	}
+        if (gatesByColor.ContainsKey(color))
+        {
+            foreach (var gate in gatesByColor[color])
+            {
+                Vector2Int gatePos = gate.GetData().position;
 
-	// --- HELPERS FOR RESTORING STATIC OBJECTS ---
+                if (allPlatesActive)
+                {
+                    // ✅ ALL plates pressed → OPEN (doesn't matter what's on it!)
+                    gate.Open();
+                    OnGateStateChanged?.Invoke(gate.GetData(), true);
+                    Debug.Log($"Gate at {gatePos} OPENED (all plates active)");
+                }
+                else
+                {
+                    // ❌ NOT all plates → CLOSE
+                    gate.Close();
+                    OnGateStateChanged?.Invoke(gate.GetData(), false);
+                    Debug.Log($"Gate at {gatePos} CLOSED (plates not all pressed)");
+                }
+            }
+        }
+    }
 
-	/// <summary>
-	/// Checks if a position holds a permanent static object (Plate, Gate, Portal)
-	/// and returns it. If not, returns a new EmptyCell.
-	/// Used to restore the grid after a dynamic object (Box/IceCube) moves away.
-	/// </summary>
-	private IGridObject GetBaseObjectAt(Vector2Int pos)
-	{
-		// 1. Check Plates
-		foreach (var kvp in platesByColor)
-		{
-			foreach (var plate in kvp.Value)
-			{
-				if (plate.GetData().position == pos) return plate;
-			}
-		}
+    public void ReportSnakeMoved() => UpdateAllPlateStates();
 
-		// 2. Check Gates
-		foreach (var kvp in gatesByColor)
-		{
-			foreach (var gate in kvp.Value)
-			{
-				if (gate.GetData().position == pos) return gate;
-			}
-		}
+    private void UpdateAllPlateStates()
+    {
+        foreach (var colorList in platesByColor.Values)
+        {
+            foreach (var plate in colorList)
+            {
+                Vector2Int pos = plate.GetData().position;
+                bool occupied = snakesOnLevel.Any(s => s.Body.Contains(pos)) || 
+                               grid.HasObjectOfType<Box>(pos) || 
+                               grid.HasObjectOfType<IceCube>(pos);
+                
+                plate.SetState(occupied);
+            }
+        }
+    }
 
-		// 3. Check Portals
-		foreach (var portal in allPortals)
-		{
-			if (portal.GetData().position == pos) return portal;
-		}
+    public void RegisterPortal(Portal portal) => allPortals.Add(portal);
+    
+    private void LinkPortals()
+    {
+        var groups = allPortals.GroupBy(p => p.GetData().colorId);
+        foreach (var group in groups)
+        {
+            var portals = group.ToList();
+            if (portals.Count == 2)
+            {
+                portals[0].SetLinkedPortal(portals[1]);
+                portals[1]. SetLinkedPortal(portals[0]);
+            }
+        }
+    }
 
-		// Note: Exits and Walls are generally not walkable/overwritable by boxes 
-		// in the same way, or handled separately. If needed, add them here.
+    public void MoveBox(Vector2Int from, Vector2Int to)
+    {
+        if (grid.HasObjectOfType<Hole>(to)) { FillHole(to, from); return; }
+        
+        Box box = grid.GetObjectOfType<Box>(from);
+        if (box != null)
+        {
+            grid.RemoveObject(from. x, from.y, box);
+            grid.AddObject(to.x, to.y, box);
+            OnBoxMoved?.Invoke(from, to);
+            UpdateAllPlateStates();
+        }
+    }
 
-		return new EmptyCell();
-	}
+    public void MoveIceCube(Vector2Int from, Vector2Int to)
+    {
+        if (grid.HasObjectOfType<Hole>(to)) { FillHole(to, from); return; }
 
-	// --- MOVEMENT & GRID UPDATES ---
+        IceCube ice = grid.GetObjectOfType<IceCube>(from);
+        if (ice != null)
+        {
+            grid.RemoveObject(from.x, from.y, ice);
+            grid.AddObject(to.x, to.y, ice);
+            OnIceCubeMoved?.Invoke(from, to);
+            UpdateAllPlateStates();
+        }
+    }
 
-	public void MoveBox(Vector2Int from, Vector2Int to)
-	{
-		IGridObject boxObject = grid.GetObject(from);
-		if (boxObject is Box)
-		{
-			// Restore the base object at the 'from' position (e.g., if box was on a plate)
-			grid.SetObject(from.x, from.y, GetBaseObjectAt(from));
+    public void FillHole(Vector2Int holePos, Vector2Int fillerPos)
+    {
+        var filler = grid.GetObjects(fillerPos).FirstOrDefault(o => o is Box || o is IceCube);
+        if (filler != null) grid.RemoveObject(fillerPos.x, fillerPos.y, filler);
+        
+        Hole hole = grid.GetObjectOfType<Hole>(holePos);
+        if (hole != null) grid.RemoveObject(holePos.x, holePos. y, hole);
 
-			// Place box at new position (overwriting whatever base object is there logic-wise)
-			grid.SetObject(to.x, to.y, boxObject);
+        OnHoleFilled?.Invoke(holePos, fillerPos);
+        UpdateAllPlateStates();
+    }
 
-			OnBoxMoved?.Invoke(from, to);
-			UpdateAllPlateStates();
-		}
-	}
+    public void SnakeHasExited(Snake snake, ExitData data)
+    {
+        snake.RemoveFromGame();
+        snakesOnLevel.Remove(snake);
 
-	public void MoveIceCube(Vector2Int from, Vector2Int to)
-	{
-		IGridObject iceCube = grid.GetObject(from);
-		if (iceCube is IceCube)
-		{
-			// Restore the base object at the 'from' position
-			grid.SetObject(from.x, from.y, GetBaseObjectAt(from));
+        Exit e = grid.GetObjectOfType<Exit>(data.position);
+        if (e != null)
+        {
+            grid.RemoveObject(data.position.x, data.position.y, e);
+        }
+        OnExitRemoved?.Invoke(data.position);
 
-			grid.SetObject(to.x, to.y, iceCube);
+        SpawnFruitFromRemainingSnakes(data.position);
 
-			OnIceCubeMoved?.Invoke(from, to);
-			UpdateAllPlateStates();
-		}
-	}
+        if (snakesOnLevel.Count == 0)
+        {
+            LevelWin?.Invoke(this, EventArgs.Empty);
+        }
 
-	public void SnakeHasExited(Snake exitedSnake, ExitData exitData)
-	{
-		if (snakesOnLevel.Contains(exitedSnake))
-		{
-			Vector2Int exitPosition = exitData.position;
-			OnExitRemoved?.Invoke(exitPosition);
-			exitedSnake.RemoveFromGame();
-			snakesOnLevel.Remove(exitedSnake);
-			UpdateAllPlateStates();
+        UpdateAllPlateStates();
+    }
 
-			if (snakesOnLevel.Count > 0)
-			{
-				var remainingColors = new List<ColorType>();
-				foreach (var snake in snakesOnLevel) remainingColors.Add(snake.Color);
-				var newFruitData = new FruitData { position = exitPosition, colors = remainingColors };
-				grid.SetObject(exitPosition.x, exitPosition.y, new Fruit(newFruitData));
-				OnFruitSpawned?.Invoke(newFruitData);
-			}
-			else
-			{
-				// Exit used and no snakes left -> effectively empty or base object?
-				// Exits are usually single-use, so EmptyCell is fine here.
-				grid.SetObject(exitPosition.x, exitPosition.y, new EmptyCell());
-			}
-			CheckForWinCondition();
-		}
-	}
+    private void SpawnFruitFromRemainingSnakes(Vector2Int exitPosition)
+    {
+        List<ColorType> remainingColors = snakesOnLevel.Select(s => s.Color).Distinct().ToList();
 
-	public void ReportFruitEaten(FruitData eatenFruitData)
-	{
-		if (eatenFruitData != null)
-		{
-			// When fruit is eaten, restore potentially underlying objects (rare, but safe)
-			grid.SetObject(eatenFruitData.position.x, eatenFruitData.position.y, GetBaseObjectAt(eatenFruitData.position));
-			OnFruitEaten?.Invoke(eatenFruitData);
-		}
-	}
+        if (remainingColors.Count == 0) return;
 
-	public void FillHole(Vector2Int hole, Vector2Int filler)
-	{
-		if (filler != Vector2Int.zero && hole != Vector2Int.zero)
-		{
-			// Filler (Box/Ice) moves away from 'filler' pos -> Restore base object there
-			grid.SetObject(filler.x, filler.y, GetBaseObjectAt(filler));
+        FruitData newFruit = new FruitData
+        {
+            colors = remainingColors,
+            position = exitPosition
+        };
 
-			// Hole is filled -> Becomes EmptyCell (walkable floor)
-			grid.SetObject(hole.x, hole.y, new EmptyCell());
+        Fruit fruitObject = new Fruit(newFruit);
+        grid.AddObject(exitPosition.x, exitPosition.y, fruitObject);
 
-			OnHoleFilled?.Invoke(hole, filler);
-			UpdateAllPlateStates();
-		}
-	}
+        OnFruitSpawned?.Invoke(newFruit);
+    }
 
-	public void RestartLevel() => ReloadLevel?.Invoke(this, EventArgs.Empty);
-	private void CheckForWinCondition()
-	{
-		if (snakesOnLevel.Count == 0)
-		{
-			Debug.Log("LEVEL COMPLETE!");
-			LevelWin?.Invoke(this, EventArgs.Empty);
-		}
-	}
+    public void ReportFruitEaten(FruitData data)
+    {
+        Fruit f = grid.GetObjectOfType<Fruit>(data.position);
+        if (f != null)
+        {
+            grid.RemoveObject(data.position.x, data.position.y, f);
+        }
+        OnFruitEaten?.Invoke(data);
+    }
 
-	public void ClearLevelData()
-	{
-		snakesOnLevel.Clear();
-		platesByColor.Clear();
-		gatesByColor.Clear();
-		allPortals.Clear();
-	}
+    public void ClearLevelData()
+    {
+        snakesOnLevel.Clear();
+        platesByColor.Clear();
+        gatesByColor.Clear();
+        allPortals.Clear();
+    }
 
-	public void ReportSnakeMoved() => UpdateAllPlateStates();
-
-	public void RegisterPlate(PressurePlate plate, PressurePlateData data)
-	{
-		if (!platesByColor.ContainsKey(data.color))
-			platesByColor[data.color] = new List<PressurePlate>();
-		platesByColor[data.color].Add(plate);
-	}
-
-	public void RegisterGate(LaserGate gate, LaserGateData data)
-	{
-		if (!gatesByColor.ContainsKey(data.color))
-			gatesByColor[data.color] = new List<LaserGate>();
-		gatesByColor[data.color].Add(gate);
-	}
-
-	public void ReportPlateStateChange(PressurePlateData data, bool isActive)
-	{
-		OnPlateStateChanged?.Invoke(data, isActive);
-		CheckPlateSystem(data.color);
-	}
-
-	private void CheckPlateSystem(PlateColor color)
-	{
-		if (!platesByColor.ContainsKey(color)) return;
-
-		bool allPlatesActive = true;
-		foreach (var plate in platesByColor[color])
-		{
-			if (!plate.IsActive)
-			{
-				allPlatesActive = false;
-				break;
-			}
-		}
-
-		if (gatesByColor.ContainsKey(color))
-		{
-			foreach (var gate in gatesByColor[color])
-			{
-				bool isGateBlockedBySnake = false;
-				if (!allPlatesActive)
-				{
-					foreach (var snake in snakesOnLevel)
-					{
-						foreach (var segment in snake.Body)
-						{
-							if (segment == gate.GetData().position)
-							{
-								isGateBlockedBySnake = true;
-								break;
-							}
-						}
-						if (isGateBlockedBySnake) break;
-					}
-				}
-
-				bool stateChanged = false;
-				// LOGIC FIX:
-				// If All Plates Active -> Open Gate (unless already open)
-				if (allPlatesActive)
-				{
-					if (!gate.IsOpen)
-					{
-						gate.Open();
-						stateChanged = true;
-					}
-				}
-				// If NOT All Plates Active -> Close Gate (unless blocked by snake)
-				else
-				{
-					if (gate.IsOpen && !isGateBlockedBySnake)
-					{
-						gate.Close();
-						stateChanged = true;
-					}
-				}
-
-				if (stateChanged)
-				{
-					OnGateStateChanged?.Invoke(gate.GetData(), gate.IsOpen);
-				}
-			}
-		}
-	}
-
-	private void UpdateAllPlateStates()
-	{
-		if (platesByColor.Count == 0) return;
-
-		foreach (var color in platesByColor.Keys)
-		{
-			foreach (var plate in platesByColor[color])
-			{
-				Vector2Int platePos = plate.GetData().position;
-				bool isNowActive = false;
-
-				// 1. Check Snakes
-				foreach (var snake in snakesOnLevel)
-				{
-					foreach (var segment in snake.Body)
-					{
-						if (segment == platePos)
-						{
-							isNowActive = true;
-							break;
-						}
-					}
-					if (isNowActive) break;
-				}
-
-				// 2. Check Objects on Grid (Boxes/IceCubes)
-				if (!isNowActive)
-				{
-					var objOnGrid = grid.GetObject(platePos);
-					if (objOnGrid is Box || objOnGrid is IceCube)
-					{
-						isNowActive = true;
-					}
-				}
-
-				if (isNowActive && !plate.IsActive)
-				{
-					plate.Activate();
-				}
-				else if (!isNowActive && plate.IsActive)
-				{
-					plate.Deactivate();
-				}
-			}
-			
-		}
-		foreach (var color in gatesByColor.Keys)
-		{
-			CheckPlateSystem(color);
-		}
-	}
+    public Snake GetSnakeAtPosition(Vector2Int pos, out SnakeEnd part)
+    {
+        foreach (var s in snakesOnLevel)
+        {
+            if (pos == s.GetHeadPosition()) { part = SnakeEnd.Head; return s; }
+            if (pos == s.GetTailPosition()) { part = SnakeEnd. Tail; return s; }
+        }
+        part = default; return null;
+    }
 }

@@ -1,34 +1,27 @@
-// --- Grid.cs ---
+// --- REPLACE ENTIRE FILE: Grid.cs ---
 
 using System;
+using System.Collections.Generic;
+using System.Linq; // Needed to search lists easily
 using UnityEngine;
 
 /// <summary>
 /// A generic, logical representation of the game board.
-/// This class knows nothing about visuals or game rules. Its only job is to store
-/// IGridObject data in a 2D array and provide helper methods to convert between
-/// grid coordinates (like [x, z]) and world space positions (a Vector3).
+/// UPDATED: Now supports STACKING objects. Each cell holds a List of objects, not just one.
 /// </summary>
 public class Grid
 {
 	// --- Grid Properties ---
-	private int width;  // The number of cells horizontally.
-	private int height; // The number of cells vertically (along the Z axis in 3D).
-	private float cellSize; // The size of each square cell in world units.
-	private Vector3 originPosition; // The world space coordinate of the grid's bottom-left corner [0, 0].
+	private int width;
+	private int height;
+	private float cellSize;
+	private Vector3 originPosition;
 
 	// --- The Core Data Structure ---
-	// A 2D array that stores an IGridObject for every cell on the board.
-	// This holds the logical state of the entire level.
-	private IGridObject[,] gridArray;
+	// A 2D Array where every element is a LIST of objects.
+	// gridArray[x,y] = List<IGridObject> containing { Floor, Gate, Snake, etc. }
+	private List<IGridObject>[,] gridArray;
 
-	/// <summary>
-	/// Constructor to create and initialize a new grid.
-	/// </summary>
-	/// <param name="width">Grid width in cells.</param>
-	/// <param name="height">Grid height in cells.</param>
-	/// <param name="cellSize">Size of each cell in world units.</param>
-	/// <param name="originPosition">World position of the grid's corner [0,0].</param>
 	public Grid(int width, int height, float cellSize, Vector3 originPosition)
 	{
 		this.width = width;
@@ -36,120 +29,126 @@ public class Grid
 		this.cellSize = cellSize;
 		this.originPosition = originPosition;
 
-		// Create the 2D array with the specified dimensions.
-		gridArray = new IGridObject[width, height];
+		// Initialize the 2D array
+		gridArray = new List<IGridObject>[width, height];
 
-		// IMPORTANT: Initialize the entire grid with EmptyCell objects by default.
-		// This ensures that no cell is ever null, preventing errors. Every spot on the
-		// board is either empty or explicitly replaced with another object (Wall, Fruit, etc.).
+		// IMPORTANT: Initialize the LIST in every single cell
 		for (int x = 0; x < width; x++)
 		{
 			for (int z = 0; z < height; z++)
 			{
-				gridArray[x, z] = new EmptyCell();
+				gridArray[x, z] = new List<IGridObject>();
+				// By default, we can add an EmptyCell, or just leave it as an empty list.
+				// For compatibility with your existing logic which expects *something* to be there,
+				// let's add an EmptyCell.
+				gridArray[x, z].Add(new EmptyCell());
 			}
 		}
 
-		// Draw visual lines in the Scene view to help with debugging and level design.
 		DrawDebugLines();
 	}
 
-
 	// --- Grid Data Manipulation ---
+
 	/// <summary>
-	/// Places or replaces an IGridObject at a specific cell coordinate.
+	/// Adds an object to the stack at the specific coordinate.
+	/// Does NOT remove existing objects.
 	/// </summary>
-	/// <param name="x">The horizontal grid coordinate.</param>
-	/// <param name="z">The vertical grid coordinate.</param>
-	/// <param name="gridObject">The logical object to place (e.g., new Wall(), new Fruit()).</param>
-	public void SetObject(int x, int z, IGridObject gridObject)
+	public void AddObject(int x, int z, IGridObject gridObject)
 	{
-		// Safety check to ensure we don't try to write to an index outside the array's bounds.
-		if (x >= 0 && z >= 0 && x < width && z < height)
+		if (IsValid(x, z))
 		{
-			gridArray[x, z] = gridObject;
+			// Optional: Remove "EmptyCell" if we are adding a solid object, 
+			// to keep the list clean, but strictly not necessary if logic handles it.
+			// For now, simple add.
+			gridArray[x, z].Add(gridObject);
 		}
 	}
 
 	/// <summary>
-	/// Retrieves the IGridObject from a specific cell coordinate.
+	/// Removes a specific object instance from the grid.
 	/// </summary>
-	/// <param name="x">The horizontal grid coordinate.</param>
-	/// <param name="z">The vertical grid coordinate.</param>
-	/// <returns>The IGridObject at that location.</returns>
-	public IGridObject GetObject(int x, int z)
+	public void RemoveObject(int x, int z, IGridObject gridObject)
 	{
-		// Check if the requested coordinates are within the grid's bounds.
-		if (x >= 0 && z >= 0 && x < width && z < height)
+		if (IsValid(x, z))
+		{
+			if (gridArray[x, z].Contains(gridObject))
+			{
+				gridArray[x, z].Remove(gridObject);
+			}
+		}
+	}
+
+	/// <summary>
+	/// Returns ALL objects at this location.
+	/// </summary>
+	public List<IGridObject> GetObjects(int x, int z)
+	{
+		if (IsValid(x, z))
 		{
 			return gridArray[x, z];
 		}
 		else
 		{
-			// If the coordinates are outside the grid, treat it as a Wall.
-			// This is a robust way to prevent snakes from moving off the board.
-			return new Wall();
+			// Return a list with a Wall if out of bounds
+			return new List<IGridObject> { new Wall() };
 		}
 	}
 
-	/// <summary>
-	/// An overload for GetObject that accepts a Vector2Int instead of separate x and z values.
-	/// </summary>
-	public IGridObject GetObject(Vector2Int position)
+	public List<IGridObject> GetObjects(Vector2Int pos) => GetObjects(pos.x, pos.y);
+
+	// --- Helpers to find specific things in the stack ---
+
+	public T GetObjectOfType<T>(Vector2Int pos) where T : class, IGridObject
 	{
-		return GetObject(position.x, position.y);
+		var list = GetObjects(pos);
+		// Return the first object of type T found in the stack
+		return list.OfType<T>().FirstOrDefault();
+	}
+	
+	public bool HasObjectOfType<T>(Vector2Int pos) where T : class, IGridObject
+	{
+		var list = GetObjects(pos);
+		return list.OfType<T>().Any();
 	}
 
 	// --- UTILITY METHODS ---
 
-	// Simple "getter" methods to provide read-only access to private grid properties.
 	public int GetWidth() => width;
 	public int GetHeight() => height;
 	public float GetCellSize() => cellSize;
 
-	/// <summary>
-	/// Converts grid coordinates (x, z) to a world space position (Vector3).
-	/// This gives the position of the bottom-left corner of the cell.
-	/// </summary>
+	private bool IsValid(int x, int z)
+	{
+		return x >= 0 && z >= 0 && x < width && z < height;
+	}
+
 	public Vector3 GetWorldPosition(int x, int z)
 	{
 		return new Vector3(x, 0, z) * cellSize + originPosition;
 	}
 
-	/// <summary>
-	/// Converts grid coordinates (x, z) to the world space position of the CENTER of the cell.
-	/// This is most often used for placing visual objects.
-	/// </summary>
 	public Vector3 GetWorldPositionOfCellCenter(int x, int z)
 	{
 		return GetWorldPosition(x, z) + new Vector3(cellSize, 0, cellSize) * 0.5f;
 	}
 
-	/// <summary>
-	/// Converts a world space position (Vector3) back into grid coordinates (x, z).
-	/// </summary>
 	public void GetXZ(Vector3 worldPosition, out int x, out int z)
 	{
 		x = Mathf.FloorToInt((worldPosition - originPosition).x / cellSize);
 		z = Mathf.FloorToInt((worldPosition - originPosition).z / cellSize);
 	}
 
-	/// <summary>
-	/// Draws a wireframe of the grid in the Unity Scene view for debugging.
-	/// </summary>
 	private void DrawDebugLines()
 	{
-		// Loop through every cell.
 		for (int x = 0; x < gridArray.GetLength(0); x++)
 		{
 			for (int z = 0; z < gridArray.GetLength(1); z++)
 			{
-				// Draw the right and top lines for each cell.
 				Debug.DrawLine(GetWorldPosition(x, z), GetWorldPosition(x + 1, z), Color.white, 100f);
 				Debug.DrawLine(GetWorldPosition(x, z), GetWorldPosition(x, z + 1), Color.white, 100f);
 			}
 		}
-		// Draw the final right and top boundaries of the entire grid.
 		Debug.DrawLine(GetWorldPosition(0, height), GetWorldPosition(width, height), Color.white, 100f);
 		Debug.DrawLine(GetWorldPosition(width, 0), GetWorldPosition(width, height), Color.white, 100f);
 	}
