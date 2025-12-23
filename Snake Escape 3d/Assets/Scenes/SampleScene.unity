@@ -444,6 +444,7 @@ MonoBehaviour:
   iceCubePrefab: {fileID: 8110669280161148910, guid: 69d7dce0711605548b0e1b90a7b592ac, type: 3}
   holePrefab: {fileID: 8110669280161148910, guid: 382a6140f8ac882428bafe1e305f7d92, type: 3}
   portalPrefab: {fileID: 8110669280161148910, guid: 2342276cef4e1374d93972a61961994a, type: 3}
+  liftGatePrefab: {fileID: 8110669280161148910, guid: ba205824b61317d42bb13295d4fe2e7e, type: 3}
   laserGatePrefab: {fileID: 8110669280161148910, guid: ba205824b61317d42bb13295d4fe2e7e, type: 3}
   pressurePlatePrefab: {fileID: 8110669280161148910, guid: aff292a73a15dd84e9ece980e98a4e6b, type: 3}
   plateMoveDuration: 0.1

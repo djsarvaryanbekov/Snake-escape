@@ -22,7 +22,8 @@ public class LevelVisualizer : MonoBehaviour
 	[SerializeField] private GameObject holePrefab;
 	[SerializeField] private GameObject portalPrefab;
 	//[SerializeField] private GameObject pressurePlatePrefab; // Optional: for visual plates
-	[SerializeField] private GameObject laserGatePrefab;
+	[SerializeField] private GameObject liftGatePrefab; // Renamed
+	[SerializeField] private GameObject laserGatePrefab; // New
 	// In the [Header("Prefabs")] section
 	[SerializeField] private GameObject pressurePlatePrefab;
 
@@ -50,7 +51,9 @@ public class LevelVisualizer : MonoBehaviour
 	private Dictionary<Vector2Int, GameObject> spawnedBoxes = new Dictionary<Vector2Int, GameObject>();
 	private Dictionary<Vector2Int, GameObject> spawnedIceCubes = new Dictionary<Vector2Int, GameObject>();
 	private Dictionary<Vector2Int, GameObject> spawnedHoles = new Dictionary<Vector2Int, GameObject>();
+	private Dictionary<Vector2Int, GameObject> spawnedLiftGates = new Dictionary<Vector2Int, GameObject>();
 	private Dictionary<Vector2Int, GameObject> spawnedLaserGates = new Dictionary<Vector2Int, GameObject>();
+
 	// With the other dictionary declarations
 	private Dictionary<Vector2Int, GameObject> spawnedPlates = new Dictionary<Vector2Int, GameObject>();
 	private Dictionary<Vector2Int, GameObject> spawnedPortals = new Dictionary<Vector2Int, GameObject>();
@@ -72,7 +75,9 @@ public class LevelVisualizer : MonoBehaviour
 		GameManager.Instance.OnBoxMoved += OnBoxMovedHandler;     // When a box is pushed, animate it.
 		GameManager.Instance.OnIceCubeMoved += OnIceCubeMovedHandler;     // When a iceCube is pushed, animate it.
 		GameManager.Instance.OnHoleFilled += Instance_OnHoleFilled;
-		GameManager.Instance.OnGateStateChanged += OnGateStateChangedHandler;
+		GameManager.Instance.OnLiftGateStateChanged += OnLiftGateStateChangedHandler;
+		GameManager.Instance.OnLaserGateStateChanged += OnLaserGateStateChangedHandler;
+
 		GameManager.Instance.OnPlateStateChanged += OnPlateStateChangedHandler;
 	}
 
@@ -172,13 +177,20 @@ public class LevelVisualizer : MonoBehaviour
 		// 	Instantiate(pressurePlatePrefab, worldPos, Quaternion.identity, levelObjectsParent);
 		// }
 
-		// Draw Laser Gates
-		foreach (var gateData in levelData.laserGates)
+		foreach (var gateData in levelData.liftGates)
 		{
 			Vector3 worldPos = grid.GetWorldPositionOfCellCenter(gateData.position.x, gateData.position.y);
-			GameObject gateGO = Instantiate(laserGatePrefab, worldPos, Quaternion.identity, levelObjectsParent);
-			spawnedLaserGates[gateData.position] = gateGO;
+			GameObject gateGO = Instantiate(liftGatePrefab, worldPos, Quaternion.identity, levelObjectsParent);
+			spawnedLiftGates[gateData.position] = gateGO;
 		}
+		// Draw Laser Gates
+		foreach (var laserData in levelData.laserGates)
+		{
+			Vector3 worldPos = grid.GetWorldPositionOfCellCenter(laserData.position.x, laserData.position.y);
+			GameObject laserGO = Instantiate(laserGatePrefab, worldPos, Quaternion.identity, levelObjectsParent);
+			spawnedLaserGates[laserData.position] = laserGO;
+		}
+
 		foreach (var portalData in levelData.portals)
 		{
 			Vector3 worldPos = grid.GetWorldPositionOfCellCenter(portalData.position.x, portalData.position.y);
@@ -397,6 +409,24 @@ public class LevelVisualizer : MonoBehaviour
 			}
 		}
 
+	}
+	
+	private void OnLiftGateStateChangedHandler(LiftGateData data, bool isOpen)
+	{
+		if (spawnedLiftGates.TryGetValue(data.position, out GameObject go))
+		{
+			// If Open -> Physical wall goes down (Inactive/Invisible)
+			go.SetActive(!isOpen); 
+		}
+	}
+
+	private void OnLaserGateStateChangedHandler(LaserGateData data, bool isActive)
+	{
+		if (spawnedLaserGates.TryGetValue(data.position, out GameObject go))
+		{
+			// If Active -> Beam is Visible
+			go.SetActive(isActive);
+		}
 	}
 
 

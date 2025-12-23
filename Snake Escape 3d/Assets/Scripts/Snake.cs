@@ -1,3 +1,5 @@
+// --- REPLACE ENTIRE FILE: Snake.cs ---
+
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -112,8 +114,6 @@ public class Snake
 
 	/// <summary>
 	/// Main movement validation.  Checks all GDD rules.
-	/// IMPORTANT: Fruit/Exit checks are done in TryMoveTo() BEFORE this! 
-	/// SIMPLIFIED: Open gates = empty cells, closed gates = walls
 	/// </summary>
 	private bool IsValidMove(Vector2Int targetPosition, SnakeEnd endToMove)
 	{
@@ -151,14 +151,18 @@ public class Snake
 		if (targetObjects. OfType<Wall>().Any())
 			return false;
 
-		// === CLOSED LASER GATE CHECK ===
-		var closedGate = targetObjects.OfType<LaserGate>().FirstOrDefault();
-		if (closedGate != null && ! closedGate.IsOpen)
+		// === LIFT GATE CHECK (Physical Wall) ===
+		// If gate exists AND is NOT Open, it blocks movement.
+		var liftGate = targetObjects.OfType<LiftGate>().FirstOrDefault();
+		if (liftGate != null && !liftGate.IsOpen)
 		{
-			Debug.Log($"Cannot move to {targetPosition} - laser gate is CLOSED!");
+			Debug.Log($"Cannot move to {targetPosition} - Lift Gate is CLOSED!");
 			return false;
 		}
-		// ✅ If gate is OPEN, treat it like empty cell - no blocking! 
+
+		// === LASER GATE CHECK (Energy) ===
+		// Laser Gates DO NOT block movement. You can walk into them (and die).
+		// So we do explicitly NOTHING here.
 
 		// === BOX PUSHING ===
 		if (targetObjects.OfType<Box>().Any())
@@ -193,6 +197,11 @@ public class Snake
 	{
 		Vector2Int dir = GetPushDirection(from, toBox);
 		Vector2Int landPos = toBox + dir;
+		
+		// GDD: Check if we are pushing the box INTO a Portal
+		// Boxes do NOT teleport, they just occupy the portal tile.
+		// So we just check if landPos is free.
+		
 		return IsLocationFreeForObject(landPos);
 	}
 
@@ -249,7 +258,6 @@ public class Snake
 
 	/// <summary>
 	/// Check if a location is free for pushing objects (boxes/ice).
-	/// SIMPLIFIED: Closed gates block, open gates are like empty cells! 
 	/// </summary>
 	private bool IsLocationFreeForObject(Vector2Int pos)
 	{
@@ -273,14 +281,18 @@ public class Snake
 		if (objects.OfType<IceCube>().Any()) return false;
 		if (objects. OfType<Hole>().Any()) return false;
 
-		// ===== CLOSED LASER GATE BLOCKS, OPEN GATE = EMPTY CELL =====
-		var gate = objects.OfType<LaserGate>().FirstOrDefault();
-		if (gate != null && ! gate.IsOpen)
+		// === LIFT GATE (Physical) ===
+		// If closed, it acts as a wall.
+		var liftGate = objects.OfType<LiftGate>().FirstOrDefault();
+		if (liftGate != null && !liftGate.IsOpen)
 		{
-			Debug.Log($"Gate at {pos} is CLOSED - blocking object!");
+			// Closed Gate blocks objects
 			return false;
 		}
-		// ✅ If gate is open, it's passable - continue checking other obstacles
+
+		// === LASER GATE (Energy) ===
+		// Does NOT block objects. If object lands here, it gets destroyed (handled in GameManager).
+		// So we return true here.
 
 		return true;
 	}

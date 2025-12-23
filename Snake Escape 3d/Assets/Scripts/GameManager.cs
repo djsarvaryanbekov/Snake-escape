@@ -28,7 +28,10 @@ public class GameManager : MonoBehaviour
     [HideInInspector] public List<Snake> snakesOnLevel { get; private set; } = new List<Snake>();
 
     private Dictionary<PlateColor, List<PressurePlate>> platesByColor = new Dictionary<PlateColor, List<PressurePlate>>();
-    private Dictionary<PlateColor, List<LaserGate>> gatesByColor = new Dictionary<PlateColor, List<LaserGate>>();
+    // Updated Dictionaries
+    private Dictionary<PlateColor, List<LiftGate>> liftGatesByColor = new Dictionary<PlateColor, List<LiftGate>>();
+    private Dictionary<PlateColor, List<LaserGate>> laserGatesByColor = new Dictionary<PlateColor, List<LaserGate>>();
+
     private List<Portal> allPortals = new List<Portal>();
 
     private void Awake()
@@ -48,58 +51,23 @@ public class GameManager : MonoBehaviour
     {
         if (!platesByColor.ContainsKey(data.color)) platesByColor[data.color] = new List<PressurePlate>();
         platesByColor[data.color].Add(plate);
-        plate.OnPlateTriggered += HandlePlateTrigger;
-    }
-
-    public void RegisterGate(LaserGate gate, LaserGateData data)
-    {
-        if (!gatesByColor.ContainsKey(data.color)) gatesByColor[data.color] = new List<LaserGate>();
-        gatesByColor[data.color]. Add(gate);
-    }
-
-    private void HandlePlateTrigger(PressurePlate plate, bool active)
-    {
-        PlateColor color = plate.GetData().color;
-        OnPlateStateChanged?.Invoke(plate. GetData(), active);
-        CheckGateSystem(color);
-    }
-
-    /// <summary>
-    /// SIMPLIFIED GATE LOGIC: 
-    /// - If ALL plates are pressed → OPEN
-    /// - Otherwise → CLOSED
-    /// - NO blocking checks - open gates act like empty cells regardless! 
-    /// </summary>
-    private void CheckGateSystem(PlateColor color)
-    {
-        if (!platesByColor.ContainsKey(color)) return;
         
-        // Check if ALL plates of this color are pressed
-        bool allPlatesActive = platesByColor[color].All(p => p.IsActive);
-
-        if (gatesByColor.ContainsKey(color))
-        {
-            foreach (var gate in gatesByColor[color])
-            {
-                Vector2Int gatePos = gate.GetData().position;
-
-                if (allPlatesActive)
-                {
-                    // ✅ ALL plates pressed → OPEN (doesn't matter what's on it!)
-                    gate.Open();
-                    OnGateStateChanged?.Invoke(gate.GetData(), true);
-                    Debug.Log($"Gate at {gatePos} OPENED (all plates active)");
-                }
-                else
-                {
-                    // ❌ NOT all plates → CLOSE
-                    gate.Close();
-                    OnGateStateChanged?.Invoke(gate.GetData(), false);
-                    Debug.Log($"Gate at {gatePos} CLOSED (plates not all pressed)");
-                }
-            }
-        }
+        plate.OnPlateTriggered += HandlePlateTrigger; 
     }
+    
+    
+    public void RegisterLiftGate(LiftGate gate, LiftGateData data)
+    {
+        if (!liftGatesByColor.ContainsKey(data.color)) liftGatesByColor[data.color] = new List<LiftGate>();
+        liftGatesByColor[data.color].Add(gate);
+    }
+
+    public void RegisterLaserGate(LaserGate gate, LaserGateData data)
+    {
+        if (!laserGatesByColor.ContainsKey(data.color)) laserGatesByColor[data.color] = new List<LaserGate>();
+        laserGatesByColor[data.color].Add(gate);
+    }
+
 
     public void ReportSnakeMoved() => UpdateAllPlateStates();
 
@@ -229,7 +197,6 @@ public class GameManager : MonoBehaviour
     {
         snakesOnLevel.Clear();
         platesByColor.Clear();
-        gatesByColor.Clear();
         allPortals.Clear();
     }
 
@@ -242,4 +209,101 @@ public class GameManager : MonoBehaviour
         }
         part = default; return null;
     }
+    
+    private void HandlePlateTrigger(PressurePlate plate, bool active)
+    {
+        PlateColor color = plate.GetData().color;
+        OnPlateStateChanged?.Invoke(plate.GetData(), active);
+        CheckGateSystem(color);
+    }
+    
+    private void CheckGateSystem(PlateColor color)
+    {
+        if (!platesByColor.ContainsKey(color)) return;
+        
+        bool allPlatesActive = platesByColor[color].All(p => p.IsActive);
+
+        // 1. HANDLE LIFT GATES (Physical)
+        if (liftGatesByColor.ContainsKey(color))
+        {
+            foreach (var gate in liftGatesByColor[color])
+            {
+                Vector2Int pos = gate.GetData().position;
+
+                if (allPlatesActive)
+                {
+                    // Plates Pressed -> Gate goes UP (Open)
+                    if (!gate.IsOpen)
+                    {
+                        gate.Open();
+                        OnLiftGateStateChanged?.Invoke(gate.GetData(), true); // Need to add this Event
+                    }
+                }
+                else
+                {
+                    // Plates Released -> Gate tries to DOWN (Close)
+                    // SAFETY CHECK: Is something standing on the gate?
+                    if (IsCellOccupied(pos))
+                    {
+                        // Something is here! Keep it OPEN.
+                        // We do nothing, waiting for the object to leave.
+                    }
+                    else
+                    {
+                        // Safe to close
+                        if (gate.IsOpen)
+                        {
+                            gate.Close();
+                            OnLiftGateStateChanged?.Invoke(gate.GetData(), false);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. HANDLE LASER GATES (Energy)
+        if (laserGatesByColor.ContainsKey(color))
+        {
+            foreach (var laser in laserGatesByColor[color])
+            {
+                // Logic: Plates Active = Laser OFF (Safe). Plates Inactive = Laser ON (Kill).
+                bool shouldBeActive = !allPlatesActive; 
+
+                if (laser.IsActive != shouldBeActive)
+                {
+                    if (shouldBeActive) laser.Activate(); else laser.Deactivate();
+                    OnLaserGateStateChanged?.Invoke(laser.GetData(), laser.IsActive); // Need to add this Event
+                }
+            }
+        }
+    }
+
+    // Helper to check for Safety Lock
+    private bool IsCellOccupied(Vector2Int pos)
+    {
+        // Check Snakes
+        if (snakesOnLevel.Any(s => s.Body.Contains(pos))) return true;
+        
+        // Check Boxes/Ice
+        if (grid.HasObjectOfType<Box>(pos)) return true;
+        if (grid.HasObjectOfType<IceCube>(pos)) return true;
+
+        return false;
+    }
+    
+    
+    public void KillSnake(Snake snake)
+    {
+        snake.RemoveFromGame();
+        snakesOnLevel.Remove(snake);
+        UpdateAllPlateStates();
+        
+        // Optional: Trigger Game Over or Restart logic here
+        // For prototype, just removing it is fine.
+        Debug.Log("Snake Destroyed.");
+    }
+
+    // Define new Events at top of Class
+    public event Action<LiftGateData, bool> OnLiftGateStateChanged;
+    public event Action<LaserGateData, bool> OnLaserGateStateChanged;
 }

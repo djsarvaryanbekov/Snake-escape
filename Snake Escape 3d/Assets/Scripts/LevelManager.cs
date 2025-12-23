@@ -117,13 +117,19 @@ public class LevelManager : MonoBehaviour
 			gameManager.grid.AddObject(plateData.position.x, plateData.position.y, plate);
 			gameManager.RegisterPlate(plate, plateData);
 		}
-
-		// 10. Create and place Laser Gate objects.
-		foreach (var gateData in levelData.laserGates)
+		foreach (var gateData in levelData.liftGates)
 		{
-			var gate = new LaserGate(gateData);
+			var gate = new LiftGate(gateData);
 			gameManager.grid.AddObject(gateData.position.x, gateData.position.y, gate);
-			gameManager.RegisterGate(gate, gateData);
+			gameManager.RegisterLiftGate(gate, gateData);
+		}
+
+		// 10b. Create and place LASER GATES (Energy)
+		foreach (var laserData in levelData.laserGates)
+		{
+			var laser = new LaserGate(laserData);
+			gameManager.grid.AddObject(laserData.position.x, laserData.position.y, laser);
+			gameManager.RegisterLaserGate(laser, laserData);
 		}
 
 		// 11. Create and place Portal objects.

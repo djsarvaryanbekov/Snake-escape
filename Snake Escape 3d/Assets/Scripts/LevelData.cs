@@ -70,13 +70,18 @@ public class PressurePlateData
 }
 
 [System.Serializable]
-public class LaserGateData
+public class LiftGateData // Renamed from LaserGateData
 {
 	public PlateColor color;
 	public Vector2Int position;
 }
 
-
+[System.Serializable]
+public class LaserGateData // New Class
+{
+	public PlateColor color;
+	public Vector2Int position;
+}
 // --- NEW SECTIONS ---
 
 public enum PortalColor

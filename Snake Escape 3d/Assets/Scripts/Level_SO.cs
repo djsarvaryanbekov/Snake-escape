@@ -44,7 +44,8 @@ public class Level_SO : ScriptableObject
 
 	[Header("Interactive Objects")]
 	public List<PressurePlateData> pressurePlates;
-	public List<LaserGateData> laserGates;
+	public List<LiftGateData> liftGates;   // Physical Gates
+	public List<LaserGateData> laserGates; // Killzone Gates
 
 
 	[Header("Teleportation")]

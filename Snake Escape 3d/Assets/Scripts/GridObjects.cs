@@ -150,17 +150,44 @@ public class PressurePlate : IGridObject
 	}
 }
 
-public class LaserGate : IGridObject
+// 1. PHYSICAL LIFT GATE (Renamed)
+public class LiftGate : IGridObject
 {
-	private readonly LaserGateData data;
+	private readonly LiftGateData data;
 	public bool IsOpen { get; private set; } = false;
 
-	public LaserGate(LaserGateData data) { this.data = data; }
-	public LaserGateData GetData() => data;
+	public LiftGate(LiftGateData data) { this.data = data; }
+	public LiftGateData GetData() => data;
 
+	// If Closed -> Acts as Wall (False). If Open -> Acts as Floor (True).
 	public bool CanSnakeInteract(Snake snake, SnakeEnd end) => IsOpen;
 	public void OnSnakeEntered(Snake snake, SnakeEnd end) { }
 
 	public void Open() => IsOpen = true;
 	public void Close() => IsOpen = false;
+}
+// --- REPLACE IN GridObjects.cs (LaserGate Class) ---
+
+public class LaserGate : IGridObject
+{
+	private readonly LaserGateData data;
+	public bool IsActive { get; private set; } = true;
+
+	public LaserGate(LaserGateData data) { this.data = data; }
+	public LaserGateData GetData() => data;
+
+	public bool CanSnakeInteract(Snake snake, SnakeEnd end) => true; 
+	
+	public void OnSnakeEntered(Snake snake, SnakeEnd end) 
+	{
+		// KILL LOGIC
+		if (IsActive)
+		{
+			Debug.Log("Snake hit a laser and died!");
+			GameManager.Instance.KillSnake(snake);
+		}
+	}
+
+	public void Deactivate() => IsActive = false;
+	public void Activate() => IsActive = true;
 }
