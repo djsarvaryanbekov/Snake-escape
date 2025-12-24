@@ -183,121 +183,154 @@ public class Snake
 
     /// <summary>
     /// Check if a box can be pushed. Includes PORTAL LOGIC.
-    /// </summary>
+    /// </summary> private bool
+  
     private bool CanPushBox(Vector2Int fromSnake, Vector2Int toBox)
     {
+        Box box = GameManager.Instance.grid.GetObjectOfType<Box>(toBox);
+        if (box == null) return false;
+
         Vector2Int dir = GetPushDirection(fromSnake, toBox);
-        Vector2Int finalLandPos = toBox + dir;
-        
-        // Portal Check for Box
-        // If the landing spot is an Active Portal, the box will teleport.
-        // We must check if the EXIT of the portal is free.
-        var portal = GameManager.Instance.grid.GetObjectOfType<Portal>(finalLandPos);
-        if (portal != null && portal.IsActive())
+
+        // Check if ANY part of the box hits a portal
+        bool usesPortal = false;
+        Vector2Int portalDelta = Vector2Int.zero;
+
+        foreach (var pos in box.OccupiedCells)
         {
-            finalLandPos = portal.GetLinkedPortal().GetData().position;
+            Vector2Int target = pos + dir;
+            Portal p = GameManager.Instance.grid.GetObjectOfType<Portal>(target);
+            if (p != null && p.IsActive())
+            {
+                usesPortal = true;
+                portalDelta = p.GetLinkedPortal().GetData().position - target;
+                break;
+            }
         }
 
-        return IsLocationFreeForObject(finalLandPos);
-    }
+        // Validate the move for the whole shape
+        foreach (var currentPos in box.OccupiedCells)
+        {
+            Vector2Int targetPos = currentPos + dir;
+            
+            // If teleporting, adjust target
+            if (usesPortal) targetPos += portalDelta;
 
-    /// <summary>
-    /// ICE CUBE SLIDING: Slides through Active Portals maintaining momentum.
-    /// </summary>
+            // Ignore self-collision
+            if (box.OccupiedCells.Contains(targetPos)) continue;
+
+            if (!IsLocationFreeForObject(targetPos)) return false;
+        }
+        
+        return true;
+    }
+    // Same Logic for Ice Cubes sliding
     private bool CanSlideIceCube(Vector2Int from, Vector2Int toCube)
     {
+        IceCube ice = GameManager.Instance.grid.GetObjectOfType<IceCube>(toCube);
+        if (ice == null) return false;
+
         Vector2Int dir = GetPushDirection(from, toCube);
-        Vector2Int current = toCube;
-        _lastValidIceCubePos = toCube;
+        
+        // We simulate sliding the WHOLE shape step-by-step
+        bool canSlide = true;
+        
+        // Safety Break
+        int steps = 0;
+        
+        // We need to track the "virtual position" of the shape during calculation
+        List<Vector2Int> virtualShape = new List<Vector2Int>(ice.OccupiedCells);
 
-        // Simulating the slide loop
-        while (true)
+        while(canSlide && steps < 50)
         {
-            Vector2Int next = current + dir;
+            List<Vector2Int> nextShapeStep = new List<Vector2Int>();
+            bool blocked = false;
+            bool overHoles = true; 
 
-            // 1. Check if next cell is valid/free
-            if (!IsLocationFreeForObject(next))
-                break;
-
-            var nextObjects = GameManager.Instance.grid.GetObjects(next);
-
-            // 2. Check for Hole (stop and fill it)
-            if (nextObjects.OfType<Hole>().Any())
+            // 1. Predict Next Step for all parts
+            foreach(var pos in virtualShape)
             {
-                _lastValidIceCubePos = next;
-                return true;
+                Vector2Int target = pos + dir;
+                if (!virtualShape.Contains(target)) // Ignore self
+                {
+                    if (!IsLocationFreeForObject(target)) 
+                    { 
+                        blocked = true; 
+                        break; 
+                    }
+                }
+                nextShapeStep.Add(target);
             }
 
-            // 3. Check for Active Portal (Teleport + Continue Sliding)
-            var portal = nextObjects.OfType<Portal>().FirstOrDefault();
-            if (portal != null && portal.IsActive())
+            if (blocked) break;
+
+            // 2. Check Gravity (Simulation)
+            // If the *entire* new shape is over holes, it stops and falls.
+            int holesCount = 0;
+            foreach(var pos in nextShapeStep)
             {
-                Vector2Int dest = portal.GetLinkedPortal().GetData().position;
-                
-                // We teleport to 'dest'. But we must check if 'dest' itself is free
-                // before continuing the slide from there.
-                // However, an active portal implies 'dest' is generally free of static blocks.
-                // We double check IsLocationFreeForObject at 'dest' to be safe (e.g. another dynamic object).
-                if (IsLocationFreeForObject(dest))
+                if (!GameManager.Instance.grid.HasObjectOfType<Hole>(pos))
                 {
-                    // Valid teleport.
-                    // The Ice Cube effectively jumps to 'dest'.
-                    // We update 'current' to 'dest' and CONTINUE the loop to slide out of it.
-                    current = dest;
-                    // Note: We do NOT update _lastValidIceCubePos to 'next' (the entrance).
-                    // We update it to the destination or points beyond.
-                    _lastValidIceCubePos = current; 
-                    continue; 
+                    overHoles = false;
                 }
                 else
                 {
-                    // Exit blocked. Stop at the entrance portal.
-                    _lastValidIceCubePos = next;
-                    return true;
+                    holesCount++;
                 }
             }
+            
+            // Logic: If it moved successfully, we update our "last valid" pos.
+            // In the new system, GameManager moves by Delta.
+            // So we just need to know if we CAN move at least 1 step.
+            
+            if (holesCount == nextShapeStep.Count)
+            {
+                // It fell into holes! Valid move, stops here.
+                _lastValidIceCubePos = toCube + (dir * (steps + 1)); // Approximate for single cell ref
+                return true; 
+            }
 
-            // Standard Slide step
-            _lastValidIceCubePos = next;
-            current = next;
+            virtualShape = nextShapeStep;
+            steps++;
+        }
+        
+        // If steps > 0, we moved at least once.
+        if (steps > 0)
+        {
+             // For the prototype, we pass the "primary" cell's destination to GameManager.
+             // GameManager calculates delta from that.
+             _lastValidIceCubePos = toCube + (dir * steps);
+             return true;
         }
 
-        return _lastValidIceCubePos != toCube;
+        return false;
     }
-
     /// <summary>
     /// Check if a location is free for pushing objects (boxes/ice).
     /// </summary>
     private bool IsLocationFreeForObject(Vector2Int pos)
     {
         var grid = GameManager.Instance.grid;
+        if (pos.x < 0 || pos.x >= grid.GetWidth() || pos.y < 0 || pos.y >= grid.GetHeight()) return false;
 
-        // Out of bounds
-        if (pos.x < 0 || pos.x >= grid.GetWidth() || pos.y < 0 || pos.y >= grid.GetHeight())
-            return false;
-
-        // Other snakes in the way
         foreach (var s in GameManager.Instance.snakesOnLevel)
-        {
             if (s.Body.Contains(pos)) return false;
-        }
 
         var objects = grid.GetObjects(pos);
-        // Static obstacles
-        
-        if (objects.OfType<Fruit>().Any()) return false;
         if (objects.OfType<Wall>().Any()) return false;
         if (objects.OfType<Box>().Any()) return false;
         if (objects.OfType<IceCube>().Any()) return false;
-        if (objects.OfType<Hole>().Any()) return false; // Can push INTO hole, but technically the cell isn't "free" to stand on, but checks above handle holes.
+        if (objects.OfType<Fruit>().Any()) return false;
+        if (objects.OfType<Exit>().Any()) return false;
         
-        // Lift Gate
+        // NOTE: We ALLOW Holes (so objects can fall in)
+        // NOTE: We ALLOW LaserGates (so objects can enter and die)
+        
         var liftGate = objects.OfType<LiftGate>().FirstOrDefault();
         if (liftGate != null && !liftGate.IsOpen) return false;
 
         return true;
     }
-
     private Vector2Int GetPushDirection(Vector2Int from, Vector2Int to)
     {
         if (snakeColor == ColorType.Green)

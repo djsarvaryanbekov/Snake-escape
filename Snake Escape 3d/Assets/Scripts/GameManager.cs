@@ -179,50 +179,6 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    // --- Object Interaction & Movement ---
-
-    public void MoveBox(Vector2Int from, Vector2Int to)
-    {
-        // 1. Check for Holes
-        if (grid.HasObjectOfType<Hole>(to)) { FillHole(to, from); return; }
-
-        // 2. Check for Portals (Teleportation Logic)
-        Vector2Int finalPos = to;
-        Portal portal = grid.GetObjectOfType<Portal>(to);
-        
-        // If box lands on active portal, it teleports to the destination
-        if (portal != null && portal.IsActive())
-        {
-            finalPos = portal.GetLinkedPortal().GetData().position;
-        }
-
-        // 3. Execute Move
-        Box box = grid.GetObjectOfType<Box>(from);
-        if (box != null)
-        {
-            grid.RemoveObject(from.x, from.y, box);
-            grid.AddObject(finalPos.x, finalPos.y, box);
-            OnBoxMoved?.Invoke(from, finalPos);
-            
-            // 4. Update Game State (Plates & Gates)
-            RefreshGameState();
-        }
-    }
-
-    public void MoveIceCube(Vector2Int from, Vector2Int to)
-    {
-        if (grid.HasObjectOfType<Hole>(to)) { FillHole(to, from); return; }
-
-        IceCube ice = grid.GetObjectOfType<IceCube>(from);
-        if (ice != null)
-        {
-            grid.RemoveObject(from.x, from.y, ice);
-            grid.AddObject(to.x, to.y, ice);
-            OnIceCubeMoved?.Invoke(from, to);
-            
-            RefreshGameState();
-        }
-    }
 
     public void FillHole(Vector2Int holePos, Vector2Int fillerPos)
     {
@@ -329,6 +285,128 @@ public class GameManager : MonoBehaviour
                 portals[0].SetLinkedPortal(portals[1]);
                 portals[1].SetLinkedPortal(portals[0]);
             }
+        }
+    }
+    
+    
+    // --- Update in GameManager.cs ---
+
+    
+    private void MoveGridEntity(GridEntity entity, Vector2Int delta)
+    {
+        var grid = this.grid;
+        
+        // Remove from old positions
+        foreach (var pos in entity.OccupiedCells)
+        {
+            grid.RemoveObject(pos.x, pos.y, entity);
+        }
+
+        // Calculate new positions
+        List<Vector2Int> newPositions = new List<Vector2Int>();
+        foreach (var pos in entity.OccupiedCells)
+        {
+            newPositions.Add(pos + delta);
+        }
+
+        // Update Entity
+        entity.ClearPositions();
+        foreach (var pos in newPositions)
+        {
+            entity.AddPosition(pos);
+            grid.AddObject(pos.x, pos.y, entity);
+        }
+
+        // Trigger Events (Visuals)
+        for (int i = 0; i < newPositions.Count; i++)
+        {
+            Vector2Int oldPos = newPositions[i] - delta;
+            if (entity is Box) OnBoxMoved?.Invoke(oldPos, newPositions[i]);
+            else if (entity is IceCube) OnIceCubeMoved?.Invoke(oldPos, newPositions[i]);
+        }
+        
+        RefreshGameState();
+    }
+
+    // 2. UPDATED MOVE BOX
+    public void MoveBox(Vector2Int from, Vector2Int to)
+    {
+        Box box = grid.GetObjectOfType<Box>(from);
+        if (box == null) return;
+
+        // 1. Calculate Delta (Direction)
+        Vector2Int delta = to - from;
+
+        // 2. Portal Check (Simple 1x1 Portal Logic for shapes)
+        // If the 'leading' cell hits a portal, we calculate a jump
+        Portal portal = grid.GetObjectOfType<Portal>(to);
+        if (portal != null && portal.IsActive())
+        {
+            Vector2Int exitPos = portal.GetLinkedPortal().GetData().position;
+            delta = exitPos - from; // Recalculate delta to jump across map
+        }
+
+        // 3. Move the Entity
+        MoveGridEntity(box, delta);
+        
+        // 4. Check if it falls into holes
+        CheckGravity(box);
+    }
+
+
+    public void MoveIceCube(Vector2Int from, Vector2Int to)
+    {
+        IceCube ice = grid.GetObjectOfType<IceCube>(from);
+        if (ice == null) return;
+        
+        // Note: Snake.cs IceCube logic pre-calculates the final position 
+        // including slide momentum and portals. We just calculate the delta.
+        Vector2Int delta = to - from;
+
+        MoveGridEntity(ice, delta);
+        CheckGravity(ice);
+    }
+
+
+    private void CheckGravity(GridEntity entity)
+    {
+        int supportNeeded = entity.OccupiedCells.Count;
+        int holesFound = 0;
+        List<Hole> holesUnderneath = new List<Hole>();
+
+        foreach (var pos in entity.OccupiedCells)
+        {
+            Hole h = grid.GetObjectOfType<Hole>(pos);
+            if (h != null)
+            {
+                holesFound++;
+                holesUnderneath.Add(h);
+            }
+        }
+
+        // Falls only if COMPLETELY over holes
+        if (holesFound == supportNeeded)
+        {
+            // Remove Entity
+            foreach (var pos in entity.OccupiedCells)
+            {
+                grid.RemoveObject(pos.x, pos.y, entity);
+                
+                // Visual cleanup event for object destruction
+                // OnObjectDestroyed?.Invoke(pos); // Add this if you implemented the destruction event
+            }
+
+            // Remove Holes
+            foreach (var pos in entity.OccupiedCells)
+            {
+                Hole h = grid.GetObjectOfType<Hole>(pos);
+                if (h != null)
+                {
+                    grid.RemoveObject(pos.x, pos.y, h);
+                    OnHoleFilled?.Invoke(pos, pos);
+                }
+            }
+            RefreshGameState();
         }
     }
 

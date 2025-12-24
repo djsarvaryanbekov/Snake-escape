@@ -91,17 +91,19 @@ public class LevelManager : MonoBehaviour
 			gameManager.snakesOnLevel.Add(logicalSnake);
 			spawnedVisualizers.Add(visualizerGO);
 		}
-
-		// 6. Create and place Box objects.
-		foreach (var boxPosition in levelData.boxPositions)
+		foreach (var boxPos in levelData.boxPositions)
 		{
-			gameManager.grid.AddObject(boxPosition.x, boxPosition.y, new Box());
+			Box newBox = new Box();
+			newBox.AddPosition(boxPos); // CRITICAL: Assign the position to the Entity
+			gameManager.grid.AddObject(boxPos.x, boxPos.y, newBox);
 		}
 
 		// 7. Create and place IceCube objects.
 		foreach (var iceCubePosition in levelData.iceCubePositions)
 		{
-			gameManager.grid.AddObject(iceCubePosition.x, iceCubePosition.y, new IceCube());
+			IceCube newIce = new IceCube();
+			newIce.AddPosition(iceCubePosition); // CRITICAL: Assign the position to the Entity
+			gameManager.grid.AddObject(iceCubePosition.x, iceCubePosition.y, newIce);
 		}
 
 		// 8. Create and place Hole objects.
