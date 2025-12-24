@@ -155,7 +155,6 @@ public class GameManager : MonoBehaviour
             }
         }
 
-        // 2. HANDLE LASER GATES (Energy)
         foreach (var color in laserGatesByColor.Keys)
         {
             bool allPlatesActive = false;
@@ -166,13 +165,21 @@ public class GameManager : MonoBehaviour
 
             foreach (var laser in laserGatesByColor[color])
             {
-                // Plates Active = Laser OFF (Safe)
-                // Plates Inactive = Laser ON (Dangerous)
                 bool shouldBeActive = !allPlatesActive;
 
                 if (laser.IsActive != shouldBeActive)
                 {
-                    if (shouldBeActive) laser.Activate(); else laser.Deactivate();
+                    if (shouldBeActive)
+                    {
+                        laser.Activate();
+                        // TRAP CHECK: Laser just turned ON. Check if anything is inside.
+                        CheckLaserKillZone(laser.GetData().position);
+                    }
+                    else
+                    {
+                        laser.Deactivate();
+                    }
+
                     OnLaserGateStateChanged?.Invoke(laser.GetData(), laser.IsActive);
                 }
             }
@@ -212,6 +219,27 @@ public class GameManager : MonoBehaviour
         }
 
         RefreshGameState();
+    }
+    
+    private void CheckLaserKillZone(Vector2Int pos)
+    {
+        // A. Check Snakes
+        foreach (var snake in snakesOnLevel.ToList())
+        {
+            if (snake.Body.Contains(pos))
+            {
+                if (snake.Color == ColorType.Blue) continue; // Blue Immunity
+                snake.SliceAt(pos);
+            }
+        }
+
+        // B. Check Boxes/Ice
+        var objects = grid.GetObjects(pos);
+        var entity = objects.OfType<GridEntity>().FirstOrDefault();
+        if (entity != null)
+        {
+            DestroyGridEntity(entity);
+        }
     }
 
     private void SpawnFruitFromRemainingSnakes(Vector2Int exitPosition)
@@ -348,6 +376,7 @@ public class GameManager : MonoBehaviour
 
         // 3. Move the Entity
         MoveGridEntity(box, delta);
+        CheckHazards(box);
         
         // 4. Check if it falls into holes
         CheckGravity(box);
@@ -364,7 +393,10 @@ public class GameManager : MonoBehaviour
         Vector2Int delta = to - from;
 
         MoveGridEntity(ice, delta);
+        CheckHazards(ice);
+        
         CheckGravity(ice);
+        
     }
 
 
@@ -409,7 +441,34 @@ public class GameManager : MonoBehaviour
             RefreshGameState();
         }
     }
+    private void CheckHazards(GridEntity entity)
+    {
+        // Check every cell the object occupies
+        foreach (var pos in entity.OccupiedCells)
+        {
+            // If there is an Active Laser Gate, destroy the object
+            LaserGate laser = grid.GetObjectOfType<LaserGate>(pos);
+            if (laser != null && laser.IsActive)
+            {
+                DestroyGridEntity(entity);
+                return;
+            }
+        }
+    }
 
+    private void DestroyGridEntity(GridEntity entity)
+    {
+        foreach (var pos in entity.OccupiedCells)
+        {
+            grid.RemoveObject(pos.x, pos.y, entity);
+            // If you want visuals to vanish, you need an event here:
+            // OnObjectDestroyed?.Invoke(pos); 
+        }
+        // Force visual update if needed, or just refresh logic
+        RefreshGameState();
+        Debug.Log("Grid Entity Destroyed by Hazard");
+    }
+    
     public void ClearLevelData()
     {
         snakesOnLevel.Clear();

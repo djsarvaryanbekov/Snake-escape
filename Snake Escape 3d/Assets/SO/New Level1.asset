@@ -57,10 +57,14 @@ MonoBehaviour:
   pressurePlates:
   - color: 0
     position: {x: 2, y: 5}
+  - color: 1
+    position: {x: 6, y: 3}
   liftGates:
   - color: 0
     position: {x: 3, y: 5}
-  laserGates: []
+  laserGates:
+  - color: 1
+    position: {x: 7, y: 3}
   portals:
   - colorId: 0
     position: {x: 6, y: 6}

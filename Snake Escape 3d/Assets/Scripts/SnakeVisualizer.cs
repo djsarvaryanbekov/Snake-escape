@@ -56,11 +56,21 @@ public class SnakeVisualizer : MonoBehaviour
 		logicalSnake.OnMoved += AnimateMove;
 		logicalSnake.OnGrew += AnimateGrowth;
 		logicalSnake.OnRemoved += AnimateRemoval;
+		logicalSnake.OnSliced += OnSlicedHandler;
+
 
 		// Perform an initial draw to create the snake's visuals for the first time.
 		FullRedraw();
 	}
 
+	private void OnSlicedHandler()
+	{
+		// If we are animating, we might want to kill the animation, 
+		// but for safety, just forcing a redraw works best for the prototype.
+		transform.DOKill(); // Stop any movement tweens
+		IsAnimating = false; // Reset flag
+		FullRedraw();
+	}
 	/// <summary>
 	/// Animates the smooth movement of all snake segments from their old positions to their new ones.
 	/// </summary>
@@ -233,6 +243,8 @@ public class SnakeVisualizer : MonoBehaviour
 			logicalSnake.OnMoved -= AnimateMove;
 			logicalSnake.OnGrew -= AnimateGrowth;
 			logicalSnake.OnRemoved -= AnimateRemoval;
+			
+			logicalSnake.OnSliced -= OnSlicedHandler;
 		}
 	}
 }

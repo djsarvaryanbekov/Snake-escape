@@ -454,6 +454,43 @@ public class Snake
         GameManager.Instance.ReportSnakeMoved();
     }
 
+    
+    // Add this event at the top
+    public event Action OnSliced; 
+
+    public void SliceAt(Vector2Int hazardPos)
+    {
+        int index = snakeBody.IndexOf(hazardPos);
+        
+        if (index == -1) return; // Position not part of snake
+
+        // GDD Logic:
+        // 1. If Head (Index 0) hits: "Head destroyed, previous segment becomes head."
+        if (index == 0)
+        {
+            snakeBody.RemoveAt(0);
+        }
+        // 2. If Body/Tail hits: "Segment destroyed, all subsequent segments towards tail destroyed."
+        else
+        {
+            // Example: Body [0, 1, 2, 3, 4]. Hit at 2.
+            // Remove range starting at 2, count is (5 - 2) = 3 items (2,3,4).
+            // Result: [0, 1].
+            snakeBody.RemoveRange(index, snakeBody.Count - index);
+        }
+
+        // Check if snake is completely destroyed
+        if (snakeBody.Count == 0)
+        {
+            RemoveFromGame();
+        }
+        else
+        {
+            // Notify Visualizer to redraw the shorter snake
+            OnSliced?.Invoke();
+        }
+    }
+    
     public Vector2Int GetHeadPosition() => snakeBody[0];
     public Vector2Int GetTailPosition() => snakeBody[snakeBody.Count - 1];
     public void RemoveFromGame() { snakeBody.Clear(); OnRemoved?.Invoke(); }

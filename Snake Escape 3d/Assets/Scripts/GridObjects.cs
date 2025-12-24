@@ -132,7 +132,6 @@ public class LiftGate : IGridObject
     public void Open() => IsOpen = true;
     public void Close() => IsOpen = false;
 }
-
 public class LaserGate : IGridObject
 {
     private readonly LaserGateData data;
@@ -141,22 +140,21 @@ public class LaserGate : IGridObject
     public LaserGate(LaserGateData data) { this.data = data; }
     public LaserGateData GetData() => data;
 
-    // Returns TRUE so objects/snakes can enter (and die)
     public bool CanSnakeInteract(Snake snake, SnakeEnd end) => true;
 
     public void OnSnakeEntered(Snake snake, SnakeEnd end)
     {
         if (IsActive)
         {
-            // Placeholder for Blue snake immunity if needed later
-            GameManager.Instance.KillSnake(snake);
+
+            Debug.Log($"Snake sliced by laser at {data.position}");
+            snake.SliceAt(data.position);
         }
     }
 
     public void Deactivate() => IsActive = false;
     public void Activate() => IsActive = true;
 }
-
 public class Portal : IGridObject
 {
     private readonly PortalData data;
