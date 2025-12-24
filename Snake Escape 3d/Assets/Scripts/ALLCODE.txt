@@ -1,0 +1,1759 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
+using UnityEngine;
+using DG.Tweening; // Requires DOTween asset
+
+// ===================================================================================
+// ENUMS
+// ===================================================================================
+
+public enum SnakeEnd { Head, Tail }
+public enum ColorType { Red, Green, Blue, Yellow }
+public enum PlateColor { Yellow, Purple, Orange }
+public enum PortalColor { Orange, Cyan, Magenta }
+
+// ===================================================================================
+// DATA CLASSES (SERIALIZABLE)
+// ===================================================================================
+
+[System.Serializable]
+public class SnakeData
+{
+    [Tooltip("The color of the snake, which determines its abilities.")]
+    public ColorType color;
+
+    [Tooltip("The starting grid coordinate of the snake's head.")]
+    public Vector2Int headPosition;
+
+    [Tooltip("The starting grid coordinate of the snake's tail.")]
+    public Vector2Int tailPosition;
+}
+
+[System.Serializable]
+public class ExitData
+{
+    [Tooltip("The color of the exit. Only snakes of the same color can use it.")]
+    public ColorType color;
+
+    [Tooltip("The minimum body length a snake must have to use this exit.")]
+    public int requiredLength;
+
+    [Tooltip("The grid coordinate where this exit is located.")]
+    public Vector2Int position;
+}
+
+[System.Serializable]
+public class FruitData
+{
+    [Tooltip("A list of snake colors that are allowed to eat this fruit.")]
+    public List<ColorType> colors;
+
+    [Tooltip("The grid coordinate where this fruit is located.")]
+    public Vector2Int position;
+}
+
+[System.Serializable]
+public class PressurePlateData
+{
+    public PlateColor color;
+    public Vector2Int position;
+}
+
+[System.Serializable]
+public class LiftGateData
+{
+    public PlateColor color;
+    public Vector2Int position;
+}
+
+[System.Serializable]
+public class LaserGateData
+{
+    public PlateColor color;
+    public Vector2Int position;
+}
+
+[System.Serializable]
+public class PortalData
+{
+    public PortalColor colorId; // Portals with the same ColorID are linked
+    public Vector2Int position;
+}
+
+// ===================================================================================
+// SCRIPTABLE OBJECT: LEVEL_SO
+// ===================================================================================
+
+[CreateAssetMenu(fileName = "New Level", menuName = "Snake/Level Data")]
+public class Level_SO : ScriptableObject
+{
+    [Header("Grid Settings")]
+    [Tooltip("The width of the level's grid in number of cells.")]
+    public int width;
+    [Tooltip("The height of the level's grid in number of cells.")]
+    public int height;
+
+    [Header("Level Objects")]
+    [Tooltip("A list of all grid positions where pushable boxes should be placed.")]
+    public List<Vector2Int> boxPositions;
+
+    [Tooltip("A list of all grid positions where impassable walls should be placed.")]
+    public List<Vector2Int> wallPositions;
+
+    [Tooltip("A list containing the data for each snake that will be spawned in this level.")]
+    public List<SnakeData> snakes;
+
+    [Tooltip("A list containing the data for each exit in this level.")]
+    public List<ExitData> exits;
+
+    [Tooltip("A list containing the data for each fruit that exists at the start of the level.")]
+    public List<FruitData> fruits;
+
+    public List<Vector2Int> iceCubePositions;
+
+    public List<Vector2Int> holePositions;
+
+    [Header("Interactive Objects")]
+    public List<PressurePlateData> pressurePlates;
+    public List<LiftGateData> liftGates;   // Physical Gates
+    public List<LaserGateData> laserGates; // Killzone Gates
+
+    [Header("Teleportation")]
+    public List<PortalData> portals; 
+}
+
+// ===================================================================================
+// CORE SYSTEM: GRID
+// ===================================================================================
+
+public class Grid
+{
+    // --- Grid Properties ---
+    private int width;
+    private int height;
+    private float cellSize;
+    private Vector3 originPosition;
+
+    // --- The Core Data Structure ---
+    private List<IGridObject>[,] gridArray;
+
+    public Grid(int width, int height, float cellSize, Vector3 originPosition)
+    {
+        this.width = width;
+        this.height = height;
+        this.cellSize = cellSize;
+        this.originPosition = originPosition;
+
+        // Initialize the 2D array
+        gridArray = new List<IGridObject>[width, height];
+
+        for (int x = 0; x < width; x++)
+        {
+            for (int z = 0; z < height; z++)
+            {
+                gridArray[x, z] = new List<IGridObject>();
+                gridArray[x, z].Add(new EmptyCell());
+            }
+        }
+
+        DrawDebugLines();
+    }
+
+    // --- Grid Data Manipulation ---
+    public void AddObject(int x, int z, IGridObject gridObject)
+    {
+        if (IsValid(x, z))
+        {
+            gridArray[x, z].Add(gridObject);
+        }
+    }
+
+    public void RemoveObject(int x, int z, IGridObject gridObject)
+    {
+        if (IsValid(x, z))
+        {
+            if (gridArray[x, z].Contains(gridObject))
+            {
+                gridArray[x, z].Remove(gridObject);
+            }
+        }
+    }
+
+    public List<IGridObject> GetObjects(int x, int z)
+    {
+        if (IsValid(x, z))
+        {
+            return gridArray[x, z];
+        }
+        else
+        {
+            return new List<IGridObject> { new Wall() };
+        }
+    }
+
+    public List<IGridObject> GetObjects(Vector2Int pos) => GetObjects(pos.x, pos.y);
+
+    public T GetObjectOfType<T>(Vector2Int pos) where T : class, IGridObject
+    {
+        var list = GetObjects(pos);
+        return list.OfType<T>().FirstOrDefault();
+    }
+    
+    public bool HasObjectOfType<T>(Vector2Int pos) where T : class, IGridObject
+    {
+        var list = GetObjects(pos);
+        return list.OfType<T>().Any();
+    }
+
+    // --- UTILITY METHODS ---
+    public int GetWidth() => width;
+    public int GetHeight() => height;
+    public float GetCellSize() => cellSize;
+
+    private bool IsValid(int x, int z)
+    {
+        return x >= 0 && z >= 0 && x < width && z < height;
+    }
+
+    public Vector3 GetWorldPosition(int x, int z)
+    {
+        return new Vector3(x, 0, z) * cellSize + originPosition;
+    }
+
+    public Vector3 GetWorldPositionOfCellCenter(int x, int z)
+    {
+        return GetWorldPosition(x, z) + new Vector3(cellSize, 0, cellSize) * 0.5f;
+    }
+
+    public void GetXZ(Vector3 worldPosition, out int x, out int z)
+    {
+        x = Mathf.FloorToInt((worldPosition - originPosition).x / cellSize);
+        z = Mathf.FloorToInt((worldPosition - originPosition).z / cellSize);
+    }
+
+    private void DrawDebugLines()
+    {
+        for (int x = 0; x < gridArray.GetLength(0); x++)
+        {
+            for (int z = 0; z < gridArray.GetLength(1); z++)
+            {
+                Debug.DrawLine(GetWorldPosition(x, z), GetWorldPosition(x + 1, z), Color.white, 100f);
+                Debug.DrawLine(GetWorldPosition(x, z), GetWorldPosition(x, z + 1), Color.white, 100f);
+            }
+        }
+        Debug.DrawLine(GetWorldPosition(0, height), GetWorldPosition(width, height), Color.white, 100f);
+        Debug.DrawLine(GetWorldPosition(width, 0), GetWorldPosition(width, height), Color.white, 100f);
+    }
+}
+
+// ===================================================================================
+// INTERFACES AND GRID OBJECTS
+// ===================================================================================
+
+public interface IGridObject
+{
+    bool CanSnakeInteract(Snake snake, SnakeEnd end);
+    void OnSnakeEntered(Snake snake, SnakeEnd end);
+}
+
+public class EmptyCell : IGridObject
+{
+    public bool CanSnakeInteract(Snake snake, SnakeEnd end) => true;
+    public void OnSnakeEntered(Snake snake, SnakeEnd end) { }
+}
+
+public class Wall : IGridObject
+{
+    public bool CanSnakeInteract(Snake snake, SnakeEnd end) => false;
+    public void OnSnakeEntered(Snake snake, SnakeEnd end) { Debug.LogError("OnSnakeEntered called on Wall!"); }
+}
+
+public class Fruit : IGridObject
+{
+    private readonly FruitData data;
+    public Fruit(FruitData data) { this.data = data; }
+
+    public bool CanSnakeInteract(Snake snake, SnakeEnd end)
+    {
+        if (end == SnakeEnd.Tail) return false;
+        return data.colors.Contains(snake.Color);
+    }
+
+    public void OnSnakeEntered(Snake snake, SnakeEnd end)
+    {
+        GameManager.Instance.ReportFruitEaten(data);
+    }
+}
+
+public class Exit : IGridObject
+{
+    private readonly ExitData data;
+    public Exit(ExitData data) { this.data = data; }
+
+    public bool CanSnakeInteract(Snake snake, SnakeEnd end)
+    {
+        if (end == SnakeEnd.Tail) return false;
+        return (snake.Color == data.color && snake.Body.Count >= data.requiredLength);
+    }
+
+    public void OnSnakeEntered(Snake snake, SnakeEnd end)
+    {
+        GameManager.Instance.SnakeHasExited(snake, data);
+    }
+}
+
+public class Box : IGridObject
+{
+    public bool CanSnakeInteract(Snake snake, SnakeEnd end) => false;
+    public void OnSnakeEntered(Snake snake, SnakeEnd end) { Debug.LogError("OnSnakeEntered called on Box!"); }
+}
+
+public class IceCube : IGridObject
+{
+    public bool CanSnakeInteract(Snake snake, SnakeEnd end) => false;
+    public void OnSnakeEntered(Snake snake, SnakeEnd end) { Debug.LogError("OnSnakeEntered called on IceCube!"); }
+}
+
+public class Hole : IGridObject
+{
+    public bool CanSnakeInteract(Snake snake, SnakeEnd end) => false;
+    public void OnSnakeEntered(Snake snake, SnakeEnd end) { Debug.LogError("OnSnakeEntered called on Hole!"); }
+}
+
+public class PressurePlate : IGridObject
+{
+    private readonly PressurePlateData data;
+    public bool IsActive { get; private set; } = false;
+    public event Action<PressurePlate, bool> OnPlateTriggered;
+
+    public PressurePlate(PressurePlateData data) { this.data = data; }
+    public PressurePlateData GetData() => data;
+
+    public bool CanSnakeInteract(Snake snake, SnakeEnd end) => true;
+    public void OnSnakeEntered(Snake snake, SnakeEnd end) { }
+
+    public void SetState(bool active)
+    {
+        if (IsActive == active) return;
+        IsActive = active;
+        OnPlateTriggered?.Invoke(this, IsActive);
+    }
+}
+
+public class LiftGate : IGridObject
+{
+    private readonly LiftGateData data;
+    public bool IsOpen { get; private set; } = false;
+
+    public LiftGate(LiftGateData data) { this.data = data; }
+    public LiftGateData GetData() => data;
+
+    public bool CanSnakeInteract(Snake snake, SnakeEnd end) => IsOpen;
+    public void OnSnakeEntered(Snake snake, SnakeEnd end) { }
+
+    public void Open() => IsOpen = true;
+    public void Close() => IsOpen = false;
+}
+
+public class LaserGate : IGridObject
+{
+    private readonly LaserGateData data;
+    public bool IsActive { get; private set; } = true;
+
+    public LaserGate(LaserGateData data) { this.data = data; }
+    public LaserGateData GetData() => data;
+
+    public bool CanSnakeInteract(Snake snake, SnakeEnd end) => true; 
+    
+    public void OnSnakeEntered(Snake snake, SnakeEnd end) 
+    {
+        if (IsActive)
+        {
+            Debug.Log("Snake hit a laser and died!");
+            GameManager.Instance.KillSnake(snake);
+        }
+    }
+
+    public void Deactivate() => IsActive = false;
+    public void Activate() => IsActive = true;
+}
+
+public class Portal : IGridObject
+{
+    private readonly PortalData data;
+    private Portal linkedPortal;
+
+    public Portal(PortalData data) { this.data = data; }
+
+    public void SetLinkedPortal(Portal other) => linkedPortal = other;
+    public Portal GetLinkedPortal() => linkedPortal;
+    public PortalData GetData() => data;
+
+    public bool IsActive()
+    {
+        if (linkedPortal == null) return false;
+        
+        var destObjects = GameManager.Instance.grid.GetObjects(linkedPortal.data.position);
+        
+        // Boxes and IceCubes block portals
+        foreach (var obj in destObjects)
+        {
+            if (obj is Box || obj is IceCube) return false;
+        }
+        
+        // Snakes also block portals
+        foreach (var snake in GameManager.Instance.snakesOnLevel)
+        {
+            if (snake.Body.Contains(linkedPortal.data.position)) return false;
+        }
+
+        return true;
+    }
+
+    public bool CanSnakeInteract(Snake snake, SnakeEnd end) => IsActive();
+    public void OnSnakeEntered(Snake snake, SnakeEnd end) { }
+}
+
+// ===================================================================================
+// SNAKE LOGIC
+// ===================================================================================
+
+public class Snake
+{
+    // Events
+    public event Action OnMoved;
+    public event Action OnGrew;
+    public event Action OnRemoved;
+    public class OnMoveFailedEventArgs : EventArgs { public MoveFailureReason reason; }
+    public event EventHandler<OnMoveFailedEventArgs> OnMoveFailed;
+    public enum MoveFailureReason { InteractionFailed, InvalidTarget, CurrentlyAnimating, CantMoveTail }
+
+    private List<Vector2Int> snakeBody = new List<Vector2Int>();
+    private ColorType snakeColor;
+    private SnakeVisualizer visualizer;
+    private Vector2Int _preWrapTarget;
+    private Vector2Int _lastValidIceCubePos;
+
+    public IReadOnlyList<Vector2Int> Body => snakeBody;
+    public ColorType Color => snakeColor;
+
+    public void SetVisualizer(SnakeVisualizer visualizer) => this.visualizer = visualizer;
+
+    public void Initialize(SnakeData data)
+    {
+        snakeColor = data.color;
+        snakeBody.Clear();
+        snakeBody.Add(data.headPosition);
+        if (data.headPosition != data.tailPosition) snakeBody.Add(data.tailPosition);
+    }
+
+    public void TryMoveTo(Vector2Int targetPosition, SnakeEnd endToMove)
+    {
+        // Animation check
+        if (visualizer != null && visualizer.IsAnimating)
+        {
+            OnMoveFailed?.Invoke(this, new OnMoveFailedEventArgs { reason = MoveFailureReason.CurrentlyAnimating });
+            return;
+        }
+
+        // Red Snake: Only Red can move via tail
+        if (endToMove == SnakeEnd.Tail && this.snakeColor != ColorType.Red)
+        {
+            OnMoveFailed?.Invoke(this, new OnMoveFailedEventArgs { reason = MoveFailureReason.CantMoveTail });
+            return;
+        }
+
+        // Green Snake: Border Wrapping
+        if (this.snakeColor == ColorType.Green)
+        {
+            _preWrapTarget = targetPosition;
+            HandleWrappingIndices(ref targetPosition);
+        }
+
+        // ===== CHECK FRUIT & EXIT INTERACTION BEFORE MOVING =====
+        var grid = GameManager.Instance.grid;
+        var targetObjects = grid.GetObjects(targetPosition);
+
+        foreach (var obj in targetObjects)
+        {
+            if (obj is Fruit fruit)
+            {
+                if (!fruit.CanSnakeInteract(this, endToMove))
+                {
+                    OnMoveFailed?.Invoke(this, new OnMoveFailedEventArgs { reason = MoveFailureReason.InteractionFailed });
+                    return;
+                }
+            }
+            else if (obj is Exit exit)
+            {
+                if (!exit.CanSnakeInteract(this, endToMove))
+                {
+                    OnMoveFailed?.Invoke(this, new OnMoveFailedEventArgs { reason = MoveFailureReason.InteractionFailed });
+                    return;
+                }
+            }
+        }
+
+        // Now validate the move is physically possible
+        if (IsValidMove(targetPosition, endToMove))
+        {
+            PerformMove(targetPosition, endToMove);
+        }
+        else
+        {
+            OnMoveFailed?.Invoke(this, new OnMoveFailedEventArgs { reason = MoveFailureReason.InteractionFailed });
+        }
+    }
+
+    private void HandleWrappingIndices(ref Vector2Int pos)
+    {
+        var grid = GameManager.Instance.grid;
+        int w = grid.GetWidth();
+        int h = grid.GetHeight();
+
+        if (pos.x < 0) pos.x = w - 1;
+        else if (pos.x >= w) pos.x = 0;
+
+        if (pos.y < 0) pos.y = h - 1;
+        else if (pos.y >= h) pos.y = 0;
+    }
+
+    private bool IsValidMove(Vector2Int targetPosition, SnakeEnd endToMove)
+    {
+        Vector2Int startPosition = (endToMove == SnakeEnd.Head) ? GetHeadPosition() : GetTailPosition();
+
+        // === ADJACENCY CHECK ===
+        if (snakeColor != ColorType.Green)
+        {
+            int dist = Mathf.Abs(targetPosition.x - startPosition.x) + Mathf.Abs(targetPosition.y - startPosition.y);
+            if (dist != 1) return false;
+        }
+
+        // === SNAKE COLLISION ===
+        foreach (var snake in GameManager.Instance.snakesOnLevel)
+        {
+            if (snake == this)
+            {
+                if (endToMove == SnakeEnd.Tail && targetPosition == GetHeadPosition())
+                    continue; // Red snake tail toward head is allowed
+                
+                if (Body.Contains(targetPosition))
+                    return false;
+            }
+            else
+            {
+                if (snake.Body.Contains(targetPosition))
+                    return false;
+            }
+        }
+
+        var grid = GameManager.Instance.grid;
+        var targetObjects = grid.GetObjects(targetPosition);
+
+        // === WALL CHECK ===
+        if (targetObjects.OfType<Wall>().Any())
+            return false;
+
+        // === LIFT GATE CHECK (Physical Wall) ===
+        var liftGate = targetObjects.OfType<LiftGate>().FirstOrDefault();
+        if (liftGate != null && !liftGate.IsOpen)
+        {
+            return false;
+        }
+
+        // === BOX PUSHING ===
+        if (targetObjects.OfType<Box>().Any())
+        {
+            if (endToMove == SnakeEnd.Tail) return false; 
+            return CanPushBox(startPosition, targetPosition);
+        }
+
+        // === ICE CUBE SLIDING ===
+        if (targetObjects.OfType<IceCube>().Any())
+        {
+            if (endToMove == SnakeEnd.Tail) return false; 
+            return CanSlideIceCube(startPosition, targetPosition);
+        }
+
+        // === HOLE CHECK ===
+        if (targetObjects.OfType<Hole>().Any())
+            return false;
+
+        // === PORTAL CHECK ===
+        var portal = targetObjects.OfType<Portal>().FirstOrDefault();
+        if (portal != null && !portal.IsActive())
+            return false;
+
+        return true;
+    }
+
+    private bool CanPushBox(Vector2Int from, Vector2Int toBox)
+    {
+        Vector2Int dir = GetPushDirection(from, toBox);
+        Vector2Int landPos = toBox + dir;
+        return IsLocationFreeForObject(landPos);
+    }
+
+    private bool CanSlideIceCube(Vector2Int from, Vector2Int toCube)
+    {
+        Vector2Int dir = GetPushDirection(from, toCube);
+        Vector2Int current = toCube;
+        _lastValidIceCubePos = toCube;
+
+        while (true)
+        {
+            Vector2Int next = current + dir;
+
+            if (!IsLocationFreeForObject(next))
+                break;
+
+            var nextObjects = GameManager.Instance.grid.GetObjects(next);
+
+            // Check for hole
+            if (nextObjects.OfType<Hole>().Any())
+            {
+                _lastValidIceCubePos = next;
+                return true;
+            }
+
+            // Check for active portal
+            var portal = nextObjects.OfType<Portal>().FirstOrDefault();
+            if (portal != null && portal.IsActive())
+            {
+                Vector2Int dest = portal.GetLinkedPortal().GetData().position;
+                if (IsLocationFreeForObject(dest))
+                {
+                    _lastValidIceCubePos = dest;
+                    current = dest;
+                    continue; 
+                }
+                else
+                {
+                    _lastValidIceCubePos = current;
+                    return _lastValidIceCubePos != toCube;
+                }
+            }
+
+            _lastValidIceCubePos = next;
+            current = next;
+        }
+
+        return _lastValidIceCubePos != toCube;
+    }
+
+    private bool IsLocationFreeForObject(Vector2Int pos)
+    {
+        var grid = GameManager.Instance.grid;
+        if (pos.x < 0 || pos.x >= grid.GetWidth() || pos.y < 0 || pos.y >= grid.GetHeight())
+            return false;
+
+        foreach (var s in GameManager.Instance.snakesOnLevel)
+        {
+            if (s.Body.Contains(pos)) return false;
+        }
+
+        var objects = grid.GetObjects(pos);
+        if (objects.OfType<Wall>().Any()) return false;
+        if (objects.OfType<Box>().Any()) return false;
+        if (objects.OfType<IceCube>().Any()) return false;
+        if (objects.OfType<Hole>().Any()) return false;
+
+        var liftGate = objects.OfType<LiftGate>().FirstOrDefault();
+        if (liftGate != null && !liftGate.IsOpen) return false;
+
+        return true;
+    }
+
+    private Vector2Int GetPushDirection(Vector2Int from, Vector2Int to)
+    {
+        if (snakeColor == ColorType.Green)
+        {
+            var grid = GameManager.Instance.grid;
+            int dx = to.x - from.x;
+            if (Mathf.Abs(dx) > 1) dx = (dx > 0) ? -1 : 1;
+            int dy = to.y - from.y;
+            if (Mathf.Abs(dy) > 1) dy = (dy > 0) ? -1 : 1;
+            return new Vector2Int(dx, dy);
+        }
+        return new Vector2Int(Mathf.Clamp(to.x - from.x, -1, 1), Mathf.Clamp(to.y - from.y, -1, 1));
+    }
+
+    private void PerformMove(Vector2Int targetPosition, SnakeEnd endToMove)
+    {
+        var grid = GameManager.Instance.grid;
+        Vector2Int startPosition = (endToMove == SnakeEnd.Head) ? GetHeadPosition() : GetTailPosition();
+
+        // === PHASE 1: MOVE PHYSICAL OBJECTS ===
+        if (grid.HasObjectOfType<Box>(targetPosition))
+        {
+            Vector2Int dir = GetPushDirection(startPosition, targetPosition);
+            GameManager.Instance.MoveBox(targetPosition, targetPosition + dir);
+        }
+        else if (grid.HasObjectOfType<IceCube>(targetPosition))
+        {
+            GameManager.Instance.MoveIceCube(targetPosition, _lastValidIceCubePos);
+        }
+
+        // === PHASE 2: MOVE SNAKE BODY ===
+        bool eaten = false;
+
+        if (endToMove == SnakeEnd.Head)
+        {
+            var fruit = grid.GetObjects(targetPosition).OfType<Fruit>().FirstOrDefault();
+            if (fruit != null && fruit.CanSnakeInteract(this, SnakeEnd.Head))
+            {
+                eaten = true;
+            }
+
+            snakeBody.Insert(0, targetPosition);
+            if (!eaten) snakeBody.RemoveAt(snakeBody.Count - 1);
+        }
+        else // Tail move
+        {
+            snakeBody.Add(targetPosition);
+            snakeBody.RemoveAt(0);
+        }
+
+        // === PHASE 3: PORTAL TELEPORTATION ===
+        Vector2Int currentEndPos = (endToMove == SnakeEnd.Head) ? GetHeadPosition() : GetTailPosition();
+        var portal = grid.GetObjectOfType<Portal>(currentEndPos);
+
+        if (portal != null && portal.IsActive())
+        {
+            Vector2Int dest = portal.GetLinkedPortal().GetData().position;
+            if (IsLocationFreeForObject(dest))
+            {
+                if (endToMove == SnakeEnd.Head)
+                    snakeBody[0] = dest;
+                else
+                    snakeBody[snakeBody.Count - 1] = dest;
+            }
+        }
+
+        // === PHASE 4: NOTIFICATIONS ===
+        if (eaten)
+            OnGrew?.Invoke();
+        else
+            OnMoved?.Invoke();
+
+        foreach (var obj in grid.GetObjects(snakeBody[0]).ToList())
+        {
+            obj.OnSnakeEntered(this, endToMove);
+        }
+
+        GameManager.Instance.ReportSnakeMoved();
+    }
+
+    public Vector2Int GetHeadPosition() => snakeBody[0];
+    public Vector2Int GetTailPosition() => snakeBody[snakeBody.Count - 1];
+    public void RemoveFromGame() { snakeBody.Clear(); OnRemoved?.Invoke(); }
+}
+
+// ===================================================================================
+// MANAGERS (MONOBEHAVIOURS)
+// ===================================================================================
+
+public class GameManager : MonoBehaviour
+{
+    public static GameManager Instance { get; private set; }
+    
+    // Events
+    public event EventHandler LevelWin;
+    public event EventHandler ReloadLevel;
+    public event Action<Level_SO> OnLevelLoaded;
+    public event Action<FruitData> OnFruitEaten;
+    public event Action<FruitData> OnFruitSpawned;
+    public event Action<Vector2Int> OnExitRemoved;
+    public event Action<Vector2Int, Vector2Int> OnBoxMoved;
+    public event Action<Vector2Int, Vector2Int> OnIceCubeMoved;
+    public event Action<Vector2Int, Vector2Int> OnHoleFilled;
+    public event Action<PressurePlateData, bool> OnPlateStateChanged;
+    public event Action<LaserGateData, bool> OnGateStateChanged;
+    public event Action<LiftGateData, bool> OnLiftGateStateChanged;
+    public event Action<LaserGateData, bool> OnLaserGateStateChanged;
+
+    [HideInInspector] public Grid grid { get; set; }
+    [HideInInspector] public List<Snake> snakesOnLevel { get; private set; } = new List<Snake>();
+
+    private Dictionary<PlateColor, List<PressurePlate>> platesByColor = new Dictionary<PlateColor, List<PressurePlate>>();
+    private Dictionary<PlateColor, List<LiftGate>> liftGatesByColor = new Dictionary<PlateColor, List<LiftGate>>();
+    private Dictionary<PlateColor, List<LaserGate>> laserGatesByColor = new Dictionary<PlateColor, List<LaserGate>>();
+    private List<Portal> allPortals = new List<Portal>();
+
+    private void Awake()
+    {
+        if (Instance != null && Instance != this) Destroy(gameObject);
+        else Instance = this;
+    }
+
+    public void TriggerLevelLoad(Level_SO data)
+    {
+        LinkPortals();
+        OnLevelLoaded?.Invoke(data);
+        UpdateAllPlateStates();
+    }
+
+    public void RegisterPlate(PressurePlate plate, PressurePlateData data)
+    {
+        if (!platesByColor.ContainsKey(data.color)) platesByColor[data.color] = new List<PressurePlate>();
+        platesByColor[data.color].Add(plate);
+        plate.OnPlateTriggered += HandlePlateTrigger; 
+    }
+    
+    public void RegisterLiftGate(LiftGate gate, LiftGateData data)
+    {
+        if (!liftGatesByColor.ContainsKey(data.color)) liftGatesByColor[data.color] = new List<LiftGate>();
+        liftGatesByColor[data.color].Add(gate);
+    }
+
+    public void RegisterLaserGate(LaserGate gate, LaserGateData data)
+    {
+        if (!laserGatesByColor.ContainsKey(data.color)) laserGatesByColor[data.color] = new List<LaserGate>();
+        laserGatesByColor[data.color].Add(gate);
+    }
+
+    public void ReportSnakeMoved() => UpdateAllPlateStates();
+
+    private void UpdateAllPlateStates()
+    {
+        foreach (var colorList in platesByColor.Values)
+        {
+            foreach (var plate in colorList)
+            {
+                Vector2Int pos = plate.GetData().position;
+                bool occupied = snakesOnLevel.Any(s => s.Body.Contains(pos)) || 
+                               grid.HasObjectOfType<Box>(pos) || 
+                               grid.HasObjectOfType<IceCube>(pos);
+                
+                plate.SetState(occupied);
+            }
+        }
+    }
+
+    public void RegisterPortal(Portal portal) => allPortals.Add(portal);
+    
+    private void LinkPortals()
+    {
+        var groups = allPortals.GroupBy(p => p.GetData().colorId);
+        foreach (var group in groups)
+        {
+            var portals = group.ToList();
+            if (portals.Count == 2)
+            {
+                portals[0].SetLinkedPortal(portals[1]);
+                portals[1].SetLinkedPortal(portals[0]);
+            }
+        }
+    }
+
+    public void MoveBox(Vector2Int from, Vector2Int to)
+    {
+        if (grid.HasObjectOfType<Hole>(to)) { FillHole(to, from); return; }
+        
+        Box box = grid.GetObjectOfType<Box>(from);
+        if (box != null)
+        {
+            grid.RemoveObject(from.x, from.y, box);
+            grid.AddObject(to.x, to.y, box);
+            OnBoxMoved?.Invoke(from, to);
+            UpdateAllPlateStates();
+        }
+    }
+
+    public void MoveIceCube(Vector2Int from, Vector2Int to)
+    {
+        if (grid.HasObjectOfType<Hole>(to)) { FillHole(to, from); return; }
+
+        IceCube ice = grid.GetObjectOfType<IceCube>(from);
+        if (ice != null)
+        {
+            grid.RemoveObject(from.x, from.y, ice);
+            grid.AddObject(to.x, to.y, ice);
+            OnIceCubeMoved?.Invoke(from, to);
+            UpdateAllPlateStates();
+        }
+    }
+
+    public void FillHole(Vector2Int holePos, Vector2Int fillerPos)
+    {
+        var filler = grid.GetObjects(fillerPos).FirstOrDefault(o => o is Box || o is IceCube);
+        if (filler != null) grid.RemoveObject(fillerPos.x, fillerPos.y, filler);
+        
+        Hole hole = grid.GetObjectOfType<Hole>(holePos);
+        if (hole != null) grid.RemoveObject(holePos.x, holePos.y, hole);
+
+        OnHoleFilled?.Invoke(holePos, fillerPos);
+        UpdateAllPlateStates();
+    }
+
+    public void SnakeHasExited(Snake snake, ExitData data)
+    {
+        snake.RemoveFromGame();
+        snakesOnLevel.Remove(snake);
+
+        Exit e = grid.GetObjectOfType<Exit>(data.position);
+        if (e != null)
+        {
+            grid.RemoveObject(data.position.x, data.position.y, e);
+        }
+        OnExitRemoved?.Invoke(data.position);
+
+        SpawnFruitFromRemainingSnakes(data.position);
+
+        if (snakesOnLevel.Count == 0)
+        {
+            LevelWin?.Invoke(this, EventArgs.Empty);
+        }
+
+        UpdateAllPlateStates();
+    }
+
+    private void SpawnFruitFromRemainingSnakes(Vector2Int exitPosition)
+    {
+        List<ColorType> remainingColors = snakesOnLevel.Select(s => s.Color).Distinct().ToList();
+        if (remainingColors.Count == 0) return;
+
+        FruitData newFruit = new FruitData
+        {
+            colors = remainingColors,
+            position = exitPosition
+        };
+
+        Fruit fruitObject = new Fruit(newFruit);
+        grid.AddObject(exitPosition.x, exitPosition.y, fruitObject);
+        OnFruitSpawned?.Invoke(newFruit);
+    }
+
+    public void ReportFruitEaten(FruitData data)
+    {
+        Fruit f = grid.GetObjectOfType<Fruit>(data.position);
+        if (f != null)
+        {
+            grid.RemoveObject(data.position.x, data.position.y, f);
+        }
+        OnFruitEaten?.Invoke(data);
+    }
+
+    public void ClearLevelData()
+    {
+        snakesOnLevel.Clear();
+        platesByColor.Clear();
+        allPortals.Clear();
+    }
+
+    public Snake GetSnakeAtPosition(Vector2Int pos, out SnakeEnd part)
+    {
+        foreach (var s in snakesOnLevel)
+        {
+            if (pos == s.GetHeadPosition()) { part = SnakeEnd.Head; return s; }
+            if (pos == s.GetTailPosition()) { part = SnakeEnd.Tail; return s; }
+        }
+        part = default; return null;
+    }
+    
+    private void HandlePlateTrigger(PressurePlate plate, bool active)
+    {
+        PlateColor color = plate.GetData().color;
+        OnPlateStateChanged?.Invoke(plate.GetData(), active);
+        CheckGateSystem(color);
+    }
+    
+    private void CheckGateSystem(PlateColor color)
+    {
+        if (!platesByColor.ContainsKey(color)) return;
+        
+        bool allPlatesActive = platesByColor[color].All(p => p.IsActive);
+
+        // 1. HANDLE LIFT GATES (Physical)
+        if (liftGatesByColor.ContainsKey(color))
+        {
+            foreach (var gate in liftGatesByColor[color])
+            {
+                Vector2Int pos = gate.GetData().position;
+
+                if (allPlatesActive)
+                {
+                    if (!gate.IsOpen)
+                    {
+                        gate.Open();
+                        OnLiftGateStateChanged?.Invoke(gate.GetData(), true);
+                    }
+                }
+                else
+                {
+                    if (IsCellOccupied(pos))
+                    {
+                        // Something is here! Keep it OPEN.
+                    }
+                    else
+                    {
+                        if (gate.IsOpen)
+                        {
+                            gate.Close();
+                            OnLiftGateStateChanged?.Invoke(gate.GetData(), false);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. HANDLE LASER GATES (Energy)
+        if (laserGatesByColor.ContainsKey(color))
+        {
+            foreach (var laser in laserGatesByColor[color])
+            {
+                bool shouldBeActive = !allPlatesActive; 
+
+                if (laser.IsActive != shouldBeActive)
+                {
+                    if (shouldBeActive) laser.Activate(); else laser.Deactivate();
+                    OnLaserGateStateChanged?.Invoke(laser.GetData(), laser.IsActive);
+                }
+            }
+        }
+    }
+
+    private bool IsCellOccupied(Vector2Int pos)
+    {
+        if (snakesOnLevel.Any(s => s.Body.Contains(pos))) return true;
+        if (grid.HasObjectOfType<Box>(pos)) return true;
+        if (grid.HasObjectOfType<IceCube>(pos)) return true;
+        return false;
+    }
+    
+    public void KillSnake(Snake snake)
+    {
+        snake.RemoveFromGame();
+        snakesOnLevel.Remove(snake);
+        UpdateAllPlateStates();
+        Debug.Log("Snake Destroyed.");
+    }
+}
+
+public class LevelManager : MonoBehaviour
+{
+    [SerializeField] private int levelIndexToLoad = 0;
+    [SerializeField] private List<Level_SO> allLevels;
+    [SerializeField] private GameObject snakeVisualizerPrefab;
+    [SerializeField] private float cellSize = 1f;
+    [SerializeField] private GameObject gridPosition;
+
+    private List<GameObject> spawnedVisualizers = new List<GameObject>();
+    private GameManager gameManager;
+    public event EventHandler OnLevelStarted;
+
+    private void Start()
+    {
+        gameManager = GameManager.Instance;
+        gameManager.ReloadLevel += OnReloadLevel;
+        LoadLevelByIndex(levelIndexToLoad);
+    }
+
+    private void OnReloadLevel(object sender, System.EventArgs e)
+    {
+        LoadLevelByIndex(levelIndexToLoad);
+    }
+
+    public void LoadLevelByIndex(int index)
+    {
+        if (index < 0 || index >= allLevels.Count)
+        {
+            Debug.LogError($"Error index {index}. All levels count {allLevels.Count}.");
+            return;
+        }
+
+        levelIndexToLoad = index;
+        ClearCurrentLevel();
+
+        Level_SO levelData = allLevels[index];
+        Vector3 originPosition = gridPosition.transform.position;
+
+        gameManager.grid = new Grid(levelData.width, levelData.height, cellSize, originPosition);
+
+        foreach (var wallPos in levelData.wallPositions)
+            gameManager.grid.AddObject(wallPos.x, wallPos.y, new Wall());
+
+        foreach (var exitData in levelData.exits)
+            gameManager.grid.AddObject(exitData.position.x, exitData.position.y, new Exit(exitData));
+
+        foreach (var fruitData in levelData.fruits)
+            gameManager.grid.AddObject(fruitData.position.x, fruitData.position.y, new Fruit(fruitData));
+
+        foreach (var snakeData in levelData.snakes)
+        {
+            Snake logicalSnake = new Snake();
+            GameObject visualizerGO = Instantiate(snakeVisualizerPrefab);
+            visualizerGO.name = $"SnakeVisualizer_{snakeData.color}";
+            SnakeVisualizer snakeVisualizer = visualizerGO.GetComponent<SnakeVisualizer>();
+
+            if (snakeVisualizer == null)
+            {
+                Debug.LogError($"On prefab '{snakeVisualizerPrefab.name}' missing component SnakeVisualizer!");
+                Destroy(visualizerGO);
+                continue;
+            }
+
+            logicalSnake.SetVisualizer(snakeVisualizer);
+            logicalSnake.Initialize(snakeData);
+            snakeVisualizer.Initialize(logicalSnake);
+
+            gameManager.snakesOnLevel.Add(logicalSnake);
+            spawnedVisualizers.Add(visualizerGO);
+        }
+
+        foreach (var boxPosition in levelData.boxPositions)
+            gameManager.grid.AddObject(boxPosition.x, boxPosition.y, new Box());
+
+        foreach (var iceCubePosition in levelData.iceCubePositions)
+            gameManager.grid.AddObject(iceCubePosition.x, iceCubePosition.y, new IceCube());
+
+        foreach (var holePosition in levelData.holePositions)
+            gameManager.grid.AddObject(holePosition.x, holePosition.y, new Hole());
+
+        foreach (var plateData in levelData.pressurePlates)
+        {
+            var plate = new PressurePlate(plateData);
+            gameManager.grid.AddObject(plateData.position.x, plateData.position.y, plate);
+            gameManager.RegisterPlate(plate, plateData);
+        }
+        foreach (var gateData in levelData.liftGates)
+        {
+            var gate = new LiftGate(gateData);
+            gameManager.grid.AddObject(gateData.position.x, gateData.position.y, gate);
+            gameManager.RegisterLiftGate(gate, gateData);
+        }
+
+        foreach (var laserData in levelData.laserGates)
+        {
+            var laser = new LaserGate(laserData);
+            gameManager.grid.AddObject(laserData.position.x, laserData.position.y, laser);
+            gameManager.RegisterLaserGate(laser, laserData);
+        }
+
+        foreach (var portalData in levelData.portals)
+        {
+            var portal = new Portal(portalData);
+            gameManager.grid.AddObject(portalData.position.x, portalData.position.y, portal);
+            gameManager.RegisterPortal(portal);
+        }
+
+        gameManager.TriggerLevelLoad(levelData);
+        OnLevelStarted?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ClearCurrentLevel()
+    {
+        foreach (var visualizer in spawnedVisualizers)
+        {
+            if (visualizer != null) Destroy(visualizer);
+        }
+        spawnedVisualizers.Clear();
+        if (gameManager != null) gameManager.ClearLevelData();
+    }
+
+    private void OnDestroy()
+    {
+        if (gameManager != null) gameManager.ReloadLevel -= OnReloadLevel;
+    }
+}
+
+// ===================================================================================
+// CONTROLLERS & UI
+// ===================================================================================
+
+public class PlayerController : MonoBehaviour
+{
+    private enum State { Idle, Dragging, UI }
+
+    public LevelManager levelManager;
+    private State currentState;
+    private Vector2Int lastMouseGridPosition;
+    private Snake selectedSnake;
+    private SnakeEnd partToMove;
+
+    private void Awake()
+    {
+        currentState = State.UI;
+        levelManager.OnLevelStarted += LevelManager_OnLevelStarted;
+        GameManager.Instance.LevelWin += Instance_LevelWin;
+    }
+
+    private void Instance_LevelWin(object sender, EventArgs e) => currentState = State.UI;
+    private void LevelManager_OnLevelStarted(object sender, EventArgs e) => currentState = State.Idle;
+
+    private void Update()
+    {
+        switch (currentState)
+        {
+            case State.Idle:
+                HandleIdleState();
+                break;
+            case State.Dragging:
+                HandleDraggingState();
+                break;
+            case State.UI:
+                break;
+        }
+    }
+
+    private void HandleIdleState()
+    {
+        if (Input.GetMouseButtonDown(0))
+        {
+            Vector2Int mouseGridPos = GetMouseGridPosition();
+            Snake foundSnake = GameManager.Instance.GetSnakeAtPosition(mouseGridPos, out SnakeEnd clickedPart);
+
+            if (foundSnake != null)
+            {
+                selectedSnake = foundSnake;
+                partToMove = clickedPart;
+                selectedSnake.OnMoveFailed += SelectedSnake_OnMoveFailed;
+                lastMouseGridPosition = mouseGridPos;
+                currentState = State.Dragging;
+            }
+        }
+    }
+
+    private void SelectedSnake_OnMoveFailed(object sender, Snake.OnMoveFailedEventArgs e)
+    {
+        StopDragging();
+    }
+
+    private void HandleDraggingState()
+    {
+        if (Input.GetMouseButtonUp(0))
+        {
+            StopDragging();
+            return;
+        }
+
+        Vector2Int currentMouseGridPosition = GetMouseGridPosition();
+
+        if (currentMouseGridPosition != lastMouseGridPosition)
+        {
+            if (selectedSnake != null)
+            {
+                selectedSnake.TryMoveTo(currentMouseGridPosition, partToMove);
+            }
+            lastMouseGridPosition = currentMouseGridPosition;
+        }
+    }
+
+    private void StopDragging()
+    {
+        if (selectedSnake != null)
+        {
+            selectedSnake.OnMoveFailed -= SelectedSnake_OnMoveFailed;
+            selectedSnake = null;
+        }
+        currentState = State.Idle;
+    }
+
+    private Vector2Int GetMouseGridPosition()
+    {
+        Vector3 worldPosition = CreateTextUtils.GetMouseWorldPosition();
+        GameManager.Instance.grid.GetXZ(worldPosition, out int x, out int z);
+        return new Vector2Int(x, z);
+    }
+}
+
+public class LevelUI : MonoBehaviour
+{
+    public GameObject gameObjectUI;
+    GameManager gameManager;
+
+    void Start()
+    {
+        gameManager = GameManager.Instance;
+        gameManager.LevelWin += GameManager_LevelWin;
+        if (gameObjectUI != null) gameObjectUI.SetActive(false);
+    }
+
+    private void GameManager_LevelWin(object sender, System.EventArgs e)
+    {
+        if (gameObjectUI != null) gameObjectUI.SetActive(true);
+    }
+
+    private void OnDestroy()
+    {
+        if (gameManager != null) gameManager.LevelWin -= GameManager_LevelWin;
+    }
+}
+
+public class UIScripts : MonoBehaviour
+{
+    [SerializeField] GameObject winCanvas;
+    private GameManager gameManager;
+
+    private void Awake()
+    {
+        gameManager = GameManager.Instance;
+        if (gameManager != null) gameManager.LevelWin += Instance_LevelWin;
+        if (winCanvas != null) winCanvas.SetActive(false);
+    }
+
+    private void Instance_LevelWin(object sender, System.EventArgs e)
+    {
+        if (winCanvas != null) winCanvas.SetActive(true);
+    }
+
+    private void OnDestroy()
+    {
+        if (gameManager != null) gameManager.LevelWin -= Instance_LevelWin;
+    }
+}
+
+// ===================================================================================
+// VISUALIZERS
+// ===================================================================================
+
+public class LevelVisualizer : MonoBehaviour
+{
+    [Header("Prefabs")]
+    [SerializeField] private GameObject wallPrefab;
+    [SerializeField] private GameObject exitPrefab;
+    [SerializeField] private GameObject fruitPrefab;
+    [SerializeField] private GameObject boxPrefab;
+    [SerializeField] private GameObject iceCubePrefab;
+    [SerializeField] private GameObject holePrefab;
+    [SerializeField] private GameObject portalPrefab;
+    [SerializeField] private GameObject liftGatePrefab;
+    [SerializeField] private GameObject laserGatePrefab;
+    [SerializeField] private GameObject pressurePlatePrefab;
+
+    [Header("Settings")]
+    [SerializeField] private Transform levelObjectsParent;
+    [SerializeField] private float boxMoveDuration = 0.15f;
+    [SerializeField] private float iceCubeMoveDuration = 0.15f;
+    [SerializeField] private float plateMoveDuration = 0.1f;
+
+    private Dictionary<Vector2Int, GameObject> spawnedExits = new Dictionary<Vector2Int, GameObject>();
+    private Dictionary<Vector2Int, GameObject> spawnedFruits = new Dictionary<Vector2Int, GameObject>();
+    private Dictionary<Vector2Int, GameObject> spawnedBoxes = new Dictionary<Vector2Int, GameObject>();
+    private Dictionary<Vector2Int, GameObject> spawnedIceCubes = new Dictionary<Vector2Int, GameObject>();
+    private Dictionary<Vector2Int, GameObject> spawnedHoles = new Dictionary<Vector2Int, GameObject>();
+    private Dictionary<Vector2Int, GameObject> spawnedLiftGates = new Dictionary<Vector2Int, GameObject>();
+    private Dictionary<Vector2Int, GameObject> spawnedLaserGates = new Dictionary<Vector2Int, GameObject>();
+    private Dictionary<Vector2Int, GameObject> spawnedPlates = new Dictionary<Vector2Int, GameObject>();
+    private Dictionary<Vector2Int, GameObject> spawnedPortals = new Dictionary<Vector2Int, GameObject>();
+
+    private void Awake()
+    {
+        if (GameManager.Instance == null) return;
+        GameManager.Instance.OnLevelLoaded += DrawLevelVisuals;
+        GameManager.Instance.OnFruitEaten += OnFruitEatenHandler;
+        GameManager.Instance.OnFruitSpawned += OnFruitSpawnedHandler;
+        GameManager.Instance.OnExitRemoved += OnExitRemovedHandler;
+        GameManager.Instance.OnBoxMoved += OnBoxMovedHandler;
+        GameManager.Instance.OnIceCubeMoved += OnIceCubeMovedHandler;
+        GameManager.Instance.OnHoleFilled += Instance_OnHoleFilled;
+        GameManager.Instance.OnLiftGateStateChanged += OnLiftGateStateChangedHandler;
+        GameManager.Instance.OnLaserGateStateChanged += OnLaserGateStateChangedHandler;
+        GameManager.Instance.OnPlateStateChanged += OnPlateStateChangedHandler;
+    }
+
+    private void OnDestroy()
+    {
+        if (GameManager.Instance != null)
+        {
+            GameManager.Instance.OnLevelLoaded -= DrawLevelVisuals;
+            GameManager.Instance.OnFruitEaten -= OnFruitEatenHandler;
+            GameManager.Instance.OnFruitSpawned -= OnFruitSpawnedHandler;
+            GameManager.Instance.OnExitRemoved -= OnExitRemovedHandler;
+            GameManager.Instance.OnBoxMoved -= OnBoxMovedHandler;
+            GameManager.Instance.OnIceCubeMoved -= OnIceCubeMovedHandler;
+            GameManager.Instance.OnHoleFilled -= Instance_OnHoleFilled;
+            GameManager.Instance.OnLiftGateStateChanged -= OnLiftGateStateChangedHandler;
+            GameManager.Instance.OnLaserGateStateChanged -= OnLaserGateStateChangedHandler;
+            GameManager.Instance.OnPlateStateChanged -= OnPlateStateChangedHandler;
+        }
+    }
+
+    private void DrawLevelVisuals(Level_SO levelData)
+    {
+        ClearVisuals();
+        var grid = GameManager.Instance.grid;
+
+        foreach (var wallPos in levelData.wallPositions)
+        {
+            Vector3 worldPos = grid.GetWorldPositionOfCellCenter(wallPos.x, wallPos.y);
+            Instantiate(wallPrefab, worldPos, Quaternion.identity, levelObjectsParent);
+        }
+
+        foreach (var holePos in levelData.holePositions)
+        {
+            Vector3 worldPos = grid.GetWorldPositionOfCellCenter(holePos.x, holePos.y);
+            GameObject holeGO = Instantiate(holePrefab, worldPos, Quaternion.identity, levelObjectsParent);
+            spawnedHoles[holePos] = holeGO;
+        }
+
+        foreach (var exitData in levelData.exits)
+        {
+            Vector3 worldPos = grid.GetWorldPositionOfCellCenter(exitData.position.x, exitData.position.y);
+            GameObject exitGO = Instantiate(exitPrefab, worldPos, Quaternion.identity, levelObjectsParent);
+            spawnedExits[exitData.position] = exitGO;
+        }
+
+        foreach (var fruitData in levelData.fruits) DrawFruitVisuals(fruitData);
+
+        foreach (var boxPos in levelData.boxPositions)
+        {
+            Vector3 worldPos = grid.GetWorldPositionOfCellCenter(boxPos.x, boxPos.y);
+            GameObject boxGO = Instantiate(boxPrefab, worldPos, Quaternion.identity, levelObjectsParent);
+            spawnedBoxes[boxPos] = boxGO;
+        }
+        foreach (var iceCubesPos in levelData.iceCubePositions)
+        {
+            Vector3 worldPos = grid.GetWorldPositionOfCellCenter(iceCubesPos.x, iceCubesPos.y);
+            GameObject iceCubeGO = Instantiate(iceCubePrefab, worldPos, Quaternion.identity, levelObjectsParent);
+            spawnedIceCubes[iceCubesPos] = iceCubeGO;
+        }
+        foreach (var plateData in levelData.pressurePlates)
+        {
+            Vector3 worldPos = grid.GetWorldPositionOfCellCenter(plateData.position.x, plateData.position.y);
+            GameObject plateGO = Instantiate(pressurePlatePrefab, worldPos, Quaternion.identity, levelObjectsParent);
+            spawnedPlates[plateData.position] = plateGO;
+        }
+
+        foreach (var gateData in levelData.liftGates)
+        {
+            Vector3 worldPos = grid.GetWorldPositionOfCellCenter(gateData.position.x, gateData.position.y);
+            GameObject gateGO = Instantiate(liftGatePrefab, worldPos, Quaternion.identity, levelObjectsParent);
+            spawnedLiftGates[gateData.position] = gateGO;
+        }
+        
+        foreach (var laserData in levelData.laserGates)
+        {
+            Vector3 worldPos = grid.GetWorldPositionOfCellCenter(laserData.position.x, laserData.position.y);
+            GameObject laserGO = Instantiate(laserGatePrefab, worldPos, Quaternion.identity, levelObjectsParent);
+            spawnedLaserGates[laserData.position] = laserGO;
+        }
+
+        foreach (var portalData in levelData.portals)
+        {
+            Vector3 worldPos = grid.GetWorldPositionOfCellCenter(portalData.position.x, portalData.position.y);
+            worldPos.y = 0.01f;
+            GameObject portalGO = Instantiate(portalPrefab, worldPos, Quaternion.identity, levelObjectsParent);
+            var renderer = portalGO.GetComponentInChildren<Renderer>();
+            if (renderer != null)
+            {
+                Color c = Color.white;
+                switch (portalData.colorId)
+                {
+                    case PortalColor.Orange: c = new Color(1f, 0.5f, 0f); break; 
+                    case PortalColor.Cyan: c = Color.cyan; break;
+                    case PortalColor.Magenta: c = Color.magenta; break;
+                }
+                renderer.material.color = c;
+            }
+            spawnedPortals[portalData.position] = portalGO;
+        }
+    }
+
+    private void OnBoxMovedHandler(Vector2Int from, Vector2Int to)
+    {
+        if (spawnedBoxes.ContainsKey(from))
+        {
+            GameObject boxGO = spawnedBoxes[from];
+            spawnedBoxes.Remove(from);
+            spawnedBoxes[to] = boxGO;
+            Vector3 targetWorldPos = GameManager.Instance.grid.GetWorldPositionOfCellCenter(to.x, to.y);
+            boxGO.transform.DOMove(targetWorldPos, boxMoveDuration).SetEase(Ease.Linear);
+        }
+    }
+    
+    private void OnIceCubeMovedHandler(Vector2Int from, Vector2Int to)
+    {
+        if (spawnedIceCubes.ContainsKey(from))
+        {
+            GameObject iceCube = spawnedIceCubes[from];
+            spawnedIceCubes.Remove(from);
+            spawnedIceCubes[to] = iceCube;
+            Vector3 targetWorldPos = GameManager.Instance.grid.GetWorldPositionOfCellCenter(to.x, to.y);
+            iceCube.transform.DOMove(targetWorldPos, iceCubeMoveDuration).SetEase(Ease.Linear);
+        }
+    }
+
+    private void OnFruitSpawnedHandler(FruitData fruitData) => DrawFruitVisuals(fruitData);
+
+    private void OnExitRemovedHandler(Vector2Int position)
+    {
+        if (spawnedExits.ContainsKey(position))
+        {
+            Destroy(spawnedExits[position]);
+            spawnedExits.Remove(position);
+        }
+    }
+
+    private void OnFruitEatenHandler(FruitData eatenFruit)
+    {
+        Vector2Int position = eatenFruit.position;
+        if (spawnedFruits.ContainsKey(position))
+        {
+            Destroy(spawnedFruits[position]);
+            spawnedFruits.Remove(position);
+        }
+    }
+
+    private void OnPlateStateChangedHandler(PressurePlateData plateData, bool isActive)
+    {
+        if (spawnedPlates.TryGetValue(plateData.position, out GameObject plateGO))
+        {
+            float targetY = isActive ? plateGO.transform.position.y - 0.1f : 0f;
+            plateGO.transform.DOMoveY(targetY, plateMoveDuration).SetEase(Ease.OutQuad);
+        }
+    }
+
+    private void ClearVisuals()
+    {
+        foreach (Transform child in levelObjectsParent) Destroy(child.gameObject);
+        spawnedExits.Clear();
+        spawnedFruits.Clear();
+        spawnedBoxes.Clear();
+        spawnedHoles.Clear();
+        spawnedIceCubes.Clear();
+        spawnedLaserGates.Clear();
+        spawnedPortals.Clear();
+        spawnedPlates.Clear();
+        spawnedLiftGates.Clear();
+    }
+
+    private void DrawFruitVisuals(FruitData fruitData)
+    {
+        var grid = GameManager.Instance.grid;
+        Vector3 worldPos = grid.GetWorldPositionOfCellCenter(fruitData.position.x, fruitData.position.y);
+        GameObject fruitGO = Instantiate(fruitPrefab, worldPos, Quaternion.identity, levelObjectsParent);
+        MeshRenderer[] renderers = fruitGO.GetComponentsInChildren<MeshRenderer>();
+
+        if (fruitData.colors.Count == 1)
+        {
+            Color singleColor = GetEngineColor(fruitData.colors[0]);
+            foreach (var renderer in renderers) renderer.material.color = singleColor;
+        }
+        else
+        {
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                if (i < fruitData.colors.Count)
+                    renderers[i].material.color = GetEngineColor(fruitData.colors[i]);
+            }
+        }
+        spawnedFruits[fruitData.position] = fruitGO;
+    }
+
+    private void Instance_OnHoleFilled(Vector2Int holepos, Vector2Int fillerpos)
+    {
+        if (spawnedBoxes.ContainsKey(fillerpos))
+        {
+            Destroy(spawnedBoxes[fillerpos]);
+            spawnedBoxes.Remove(fillerpos);
+        }
+        else if (spawnedIceCubes.ContainsKey(fillerpos))
+        {
+            Destroy(spawnedIceCubes[fillerpos]);
+            spawnedIceCubes.Remove(fillerpos);
+        }
+        else Debug.LogError("Error at OnholeFilled dictionaries didnt contain key" + fillerpos);
+        
+        if (holepos != Vector2Int.zero && spawnedHoles.ContainsKey(holepos))
+        {
+            Destroy(spawnedHoles[holepos]);
+            spawnedHoles.Remove(holepos);
+        }
+    }
+    
+    private void OnLiftGateStateChangedHandler(LiftGateData data, bool isOpen)
+    {
+        if (spawnedLiftGates.TryGetValue(data.position, out GameObject go)) go.SetActive(!isOpen);
+    }
+
+    private void OnLaserGateStateChangedHandler(LaserGateData data, bool isActive)
+    {
+        if (spawnedLaserGates.TryGetValue(data.position, out GameObject go)) go.SetActive(isActive);
+    }
+
+    private Color GetEngineColor(ColorType colorType)
+    {
+        switch (colorType)
+        {
+            case ColorType.Red: return Color.red;
+            case ColorType.Blue: return Color.blue;
+            case ColorType.Green: return Color.green;
+            case ColorType.Yellow: return Color.yellow;
+            default: return Color.white;
+        }
+    }
+}
+
+public class SnakeVisualizer : MonoBehaviour
+{
+    [Header("Prefabs")]
+    [SerializeField] private GameObject headPrefab;
+    [SerializeField] private GameObject bodyPrefab;
+    [SerializeField] private GameObject tailPrefab;
+
+    [Header("Animation Settings")]
+    [SerializeField] private float moveDuration = 0.15f;
+
+    private Snake logicalSnake;
+    private List<GameObject> visualSegments = new List<GameObject>();
+    private bool isRedrawing = false;
+    public bool IsAnimating { get; private set; } = false;
+
+    public void Initialize(Snake snakeToVisualize)
+    {
+        this.logicalSnake = snakeToVisualize;
+        logicalSnake.OnMoved += AnimateMove;
+        logicalSnake.OnGrew += AnimateGrowth;
+        logicalSnake.OnRemoved += AnimateRemoval;
+        FullRedraw();
+    }
+
+    private void AnimateMove()
+    {
+        if (IsAnimating || isRedrawing) return;
+        IsAnimating = true;
+        var snakeBody = logicalSnake.Body;
+
+        if (visualSegments.Count != snakeBody.Count)
+        {
+            FullRedraw();
+            IsAnimating = false;
+            return;
+        }
+
+        Sequence moveSequence = DOTween.Sequence();
+        for (int i = 0; i < snakeBody.Count; i++)
+        {
+            Vector3 targetWorldPos = GameManager.Instance.grid.GetWorldPositionOfCellCenter(snakeBody[i].x, snakeBody[i].y);
+            targetWorldPos.y = 0.1f; 
+            moveSequence.Join(visualSegments[i].transform.DOMove(targetWorldPos, moveDuration));
+        }
+        moveSequence.OnComplete(() => { IsAnimating = false; });
+    }
+
+    private void AnimateGrowth()
+    {
+        if (IsAnimating || isRedrawing)
+        {
+            StartCoroutine(DelayedGrowthAnimation());
+            return;
+        }
+        isRedrawing = true;
+        FullRedraw();
+        isRedrawing = false;
+        AnimateMove();
+    }
+
+    private IEnumerator DelayedGrowthAnimation()
+    {
+        yield return new WaitUntil(() => !IsAnimating && !isRedrawing);
+        AnimateGrowth();
+    }
+
+    private void AnimateRemoval()
+    {
+        foreach (var segment in visualSegments) Destroy(segment);
+        visualSegments.Clear();
+    }
+
+    private void FullRedraw()
+    {
+        foreach (var segment in visualSegments) Destroy(segment);
+        visualSegments.Clear();
+
+        var snakeBody = logicalSnake.Body;
+        if (snakeBody.Count == 0) return;
+
+        for (int i = 0; i < snakeBody.Count; i++)
+        {
+            GameObject segmentPrefab;
+            if (i == 0) segmentPrefab = headPrefab;
+            else if (i == snakeBody.Count - 1) segmentPrefab = tailPrefab;
+            else segmentPrefab = bodyPrefab;
+
+            GameObject segment = Instantiate(segmentPrefab, transform);
+            Vector3 worldPos = GameManager.Instance.grid.GetWorldPositionOfCellCenter(snakeBody[i].x, snakeBody[i].y);
+            worldPos.y = 0.1f;
+            segment.transform.position = worldPos;
+
+            Renderer segmentRenderer = segment.GetComponentInChildren<Renderer>();
+            if (segmentRenderer != null) segmentRenderer.material.color = GetColorFromEnum(logicalSnake.Color);
+            visualSegments.Add(segment);
+        }
+    }
+
+    private Color GetColorFromEnum(ColorType colorType)
+    {
+        switch (colorType)
+        {
+            case ColorType.Red: return Color.red;
+            case ColorType.Blue: return Color.blue;
+            case ColorType.Green: return Color.green;
+            case ColorType.Yellow: return Color.yellow;
+            default: return Color.white;
+        }
+    }
+
+    private void OnDestroy()
+    {
+        if (logicalSnake != null)
+        {
+            logicalSnake.OnMoved -= AnimateMove;
+            logicalSnake.OnGrew -= AnimateGrowth;
+            logicalSnake.OnRemoved -= AnimateRemoval;
+        }
+    }
+}
+
+// ===================================================================================
+// UTILS
+// ===================================================================================
+
+public static class CreateTextUtils
+{
+    public static TextMesh CreateWorldText(string text, Transform parent = null, Vector3 localPosition = default(Vector3), int fontSize = 40, Color? color = null, Color? spriteColor = null, TextAnchor textAnchor = TextAnchor.UpperLeft, TextAlignment textAlignment = TextAlignment.Left, int sortingOrder = 0)
+    {
+        if (color == null) color = Color.white;
+        if (spriteColor == null) spriteColor = Color.white; 
+        return CreateWorldText(parent, text, localPosition, fontSize, (Color)color, (Color)spriteColor, textAnchor, textAlignment, sortingOrder);
+    }
+
+    public static TextMesh CreateWorldText(Transform parent, string text, Vector3 localPosition, int fontSize, Color color, Color spriteColor, TextAnchor textAnchor, TextAlignment textAlignment, int sortingOrder)
+    {
+        GameObject gameObjectText = new GameObject("World_Text", typeof(TextMesh));
+        Transform transform = gameObjectText.transform;
+        transform.SetParent(parent, false);
+        transform.localPosition = localPosition;
+
+        TextMesh textMesh = gameObjectText.GetComponent<TextMesh>();
+        textMesh.anchor = textAnchor;
+        textMesh.alignment = textAlignment;
+        textMesh.text = text;
+        textMesh.fontSize = fontSize;
+        textMesh.color = color;
+        textMesh.GetComponent<MeshRenderer>().sortingOrder = sortingOrder;
+
+        return textMesh;
+    }
+
+    public static Vector3 GetMouseWorldPosition()
+    {
+        if (GameManager.Instance == null || GameManager.Instance.grid == null) return Vector3.one * -1;
+        Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+        Vector3 gridOrigin = GameManager.Instance.grid.GetWorldPosition(0, 0);
+        Plane gridPlane = new Plane(Vector3.up, gridOrigin);
+
+        if (gridPlane.Raycast(ray, out float enter))
+        {
+            Vector3 worldPosition = ray.GetPoint(enter);
+            return worldPosition;
+        }
+        else
+        {
+            return Vector3.one * -1;
+        }
+    }
+}

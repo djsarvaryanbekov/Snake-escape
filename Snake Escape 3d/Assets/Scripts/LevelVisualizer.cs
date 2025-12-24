@@ -1,447 +1,286 @@
-// --- LevelVisualizer.cs ---
-
 using System.Collections.Generic;
 using UnityEngine;
 using DG.Tweening;
-using System; // A popular third-party library for creating smooth animations (tweens).
 
-/// <summary>
-/// Manages the visual representation of all non-snake grid objects (Walls, Exits, Fruits, Boxes).
-/// This class is a "listener". It subscribes to events from the GameManager and reacts by
-/// creating, destroying, or animating GameObjects in the scene. It keeps the game's visual
-/// state synchronized with its logical state.
-/// </summary>
 public class LevelVisualizer : MonoBehaviour
 {
-	[Header("Prefabs")]
-	[SerializeField] private GameObject wallPrefab;
-	[SerializeField] private GameObject exitPrefab;
-	[SerializeField] private GameObject fruitPrefab;
-	[SerializeField] private GameObject boxPrefab;
-	[SerializeField] private GameObject iceCubePrefab;
-	[SerializeField] private GameObject holePrefab;
-	[SerializeField] private GameObject portalPrefab;
-	//[SerializeField] private GameObject pressurePlatePrefab; // Optional: for visual plates
-	[SerializeField] private GameObject liftGatePrefab; // Renamed
-	[SerializeField] private GameObject laserGatePrefab; // New
-	// In the [Header("Prefabs")] section
-	[SerializeField] private GameObject pressurePlatePrefab;
+    [Header("Prefabs")]
+    [SerializeField] private GameObject wallPrefab;
+    [SerializeField] private GameObject exitPrefab;
+    [SerializeField] private GameObject fruitPrefab;
+    [SerializeField] private GameObject boxPrefab;
+    [SerializeField] private GameObject iceCubePrefab;
+    [SerializeField] private GameObject holePrefab;
+    [SerializeField] private GameObject portalPrefab;
+    [SerializeField] private GameObject pressurePlatePrefab;
+    [SerializeField] private GameObject liftGatePrefab;
+    [SerializeField] private GameObject laserGatePrefab;
 
-	// In the [Header("Settings")] section
-	[SerializeField] private float plateMoveDuration = 0.1f;
+    [Header("Settings")]
+    [SerializeField] private Transform levelObjectsParent;
+    [SerializeField] private float boxMoveDuration = 0.15f;
+    [SerializeField] private float iceCubeMoveDuration = 0.15f;
+    [SerializeField] private float plateMoveDuration = 0.1f;
 
+    // Dictionary tracking
+    private Dictionary<Vector2Int, GameObject> spawnedExits = new Dictionary<Vector2Int, GameObject>();
+    private Dictionary<Vector2Int, GameObject> spawnedFruits = new Dictionary<Vector2Int, GameObject>();
+    private Dictionary<Vector2Int, GameObject> spawnedBoxes = new Dictionary<Vector2Int, GameObject>();
+    private Dictionary<Vector2Int, GameObject> spawnedIceCubes = new Dictionary<Vector2Int, GameObject>();
+    private Dictionary<Vector2Int, GameObject> spawnedHoles = new Dictionary<Vector2Int, GameObject>();
+    private Dictionary<Vector2Int, GameObject> spawnedPlates = new Dictionary<Vector2Int, GameObject>();
+    private Dictionary<Vector2Int, GameObject> spawnedLiftGates = new Dictionary<Vector2Int, GameObject>();
+    private Dictionary<Vector2Int, GameObject> spawnedLaserGates = new Dictionary<Vector2Int, GameObject>();
+    private Dictionary<Vector2Int, GameObject> spawnedPortals = new Dictionary<Vector2Int, GameObject>();
 
-	[Header("Settings")]
-	[Tooltip("A parent Transform in the hierarchy to keep spawned level objects organized.")]
-	[SerializeField] private Transform levelObjectsParent;
-	[Tooltip("The duration of the box push animation in seconds.")]
-	[SerializeField] private float boxMoveDuration = 0.15f;
-	[SerializeField] private float iceCubeMoveDuration = 0.15f;
+    private void Awake()
+    {
+        if (GameManager.Instance == null) return;
 
+        GameManager.Instance.OnLevelLoaded += DrawLevelVisuals;
+        GameManager.Instance.OnFruitEaten += OnFruitEatenHandler;
+        GameManager.Instance.OnFruitSpawned += OnFruitSpawnedHandler;
+        GameManager.Instance.OnExitRemoved += OnExitRemovedHandler;
+        GameManager.Instance.OnBoxMoved += OnBoxMovedHandler;
+        GameManager.Instance.OnIceCubeMoved += OnIceCubeMovedHandler;
+        GameManager.Instance.OnHoleFilled += Instance_OnHoleFilled;
+        
+        // NEW: Specific gate events
+        GameManager.Instance.OnLiftGateStateChanged += OnLiftGateStateChangedHandler;
+        GameManager.Instance.OnLaserGateStateChanged += OnLaserGateStateChangedHandler;
+        
+        GameManager.Instance.OnPlateStateChanged += OnPlateStateChangedHandler;
+    }
 
+    private void OnDestroy()
+    {
+        if (GameManager.Instance != null)
+        {
+            GameManager.Instance.OnLevelLoaded -= DrawLevelVisuals;
+            GameManager.Instance.OnFruitEaten -= OnFruitEatenHandler;
+            GameManager.Instance.OnFruitSpawned -= OnFruitSpawnedHandler;
+            GameManager.Instance.OnExitRemoved -= OnExitRemovedHandler;
+            GameManager.Instance.OnBoxMoved -= OnBoxMovedHandler;
+            GameManager.Instance.OnIceCubeMoved -= OnIceCubeMovedHandler;
+            GameManager.Instance.OnHoleFilled -= Instance_OnHoleFilled;
+            
+            // NEW: Correct unsubscribes
+            GameManager.Instance.OnLiftGateStateChanged -= OnLiftGateStateChangedHandler;
+            GameManager.Instance.OnLaserGateStateChanged -= OnLaserGateStateChangedHandler;
+            
+            GameManager.Instance.OnPlateStateChanged -= OnPlateStateChangedHandler;
+        }
+    }
 
+    private void DrawLevelVisuals(Level_SO levelData)
+    {
+        ClearVisuals();
+        var grid = GameManager.Instance.grid;
 
-	// --- Private State ---
+        // Walls
+        foreach (var wallPos in levelData.wallPositions)
+        {
+            Instantiate(wallPrefab, grid.GetWorldPositionOfCellCenter(wallPos.x, wallPos.y), Quaternion.identity, levelObjectsParent);
+        }
 
-	// Dictionaries are used to keep track of the GameObjects we've spawned for each logical object.
-	// The key is the object's grid position, and the value is the GameObject itself.
-	// This allows us to quickly find and destroy a specific fruit or exit's GameObject when it's removed.
-	private Dictionary<Vector2Int, GameObject> spawnedExits = new Dictionary<Vector2Int, GameObject>();
-	private Dictionary<Vector2Int, GameObject> spawnedFruits = new Dictionary<Vector2Int, GameObject>();
-	private Dictionary<Vector2Int, GameObject> spawnedBoxes = new Dictionary<Vector2Int, GameObject>();
-	private Dictionary<Vector2Int, GameObject> spawnedIceCubes = new Dictionary<Vector2Int, GameObject>();
-	private Dictionary<Vector2Int, GameObject> spawnedHoles = new Dictionary<Vector2Int, GameObject>();
-	private Dictionary<Vector2Int, GameObject> spawnedLiftGates = new Dictionary<Vector2Int, GameObject>();
-	private Dictionary<Vector2Int, GameObject> spawnedLaserGates = new Dictionary<Vector2Int, GameObject>();
+        // Holes
+        foreach (var holePos in levelData.holePositions)
+        {
+            GameObject go = Instantiate(holePrefab, grid.GetWorldPositionOfCellCenter(holePos.x, holePos.y), Quaternion.identity, levelObjectsParent);
+            spawnedHoles[holePos] = go;
+        }
 
-	// With the other dictionary declarations
-	private Dictionary<Vector2Int, GameObject> spawnedPlates = new Dictionary<Vector2Int, GameObject>();
-	private Dictionary<Vector2Int, GameObject> spawnedPortals = new Dictionary<Vector2Int, GameObject>();
+        // Exits
+        foreach (var exitData in levelData.exits)
+        {
+            GameObject go = Instantiate(exitPrefab, grid.GetWorldPositionOfCellCenter(exitData.position.x, exitData.position.y), Quaternion.identity, levelObjectsParent);
+            spawnedExits[exitData.position] = go;
+        }
 
+        // Fruits
+        foreach (var fruitData in levelData.fruits) DrawFruitVisuals(fruitData);
 
-	/// <summary>
-	/// In Awake, we subscribe to all the relevant events from the GameManager.
-	/// </summary>
-	private void Awake()
-	{
-		// Safety check in case the GameManager doesn't exist yet.
-		if (GameManager.Instance == null) return;
+        // Boxes
+        foreach (var pos in levelData.boxPositions)
+        {
+            GameObject go = Instantiate(boxPrefab, grid.GetWorldPositionOfCellCenter(pos.x, pos.y), Quaternion.identity, levelObjectsParent);
+            spawnedBoxes[pos] = go;
+        }
 
-		// Subscribe our methods to be called when the GameManager fires these events.
-		GameManager.Instance.OnLevelLoaded += DrawLevelVisuals;   // When a level is ready, draw it.
-		GameManager.Instance.OnFruitEaten += OnFruitEatenHandler; // When a fruit is eaten, destroy its visual.
-		GameManager.Instance.OnFruitSpawned += OnFruitSpawnedHandler; // When a new fruit appears, draw it.
-		GameManager.Instance.OnExitRemoved += OnExitRemovedHandler;   // When an exit is used, destroy its visual.
-		GameManager.Instance.OnBoxMoved += OnBoxMovedHandler;     // When a box is pushed, animate it.
-		GameManager.Instance.OnIceCubeMoved += OnIceCubeMovedHandler;     // When a iceCube is pushed, animate it.
-		GameManager.Instance.OnHoleFilled += Instance_OnHoleFilled;
-		GameManager.Instance.OnLiftGateStateChanged += OnLiftGateStateChangedHandler;
-		GameManager.Instance.OnLaserGateStateChanged += OnLaserGateStateChangedHandler;
+        // Ice Cubes
+        foreach (var pos in levelData.iceCubePositions)
+        {
+            GameObject go = Instantiate(iceCubePrefab, grid.GetWorldPositionOfCellCenter(pos.x, pos.y), Quaternion.identity, levelObjectsParent);
+            spawnedIceCubes[pos] = go;
+        }
 
-		GameManager.Instance.OnPlateStateChanged += OnPlateStateChangedHandler;
-	}
+        // Plates
+        foreach (var data in levelData.pressurePlates)
+        {
+            GameObject go = Instantiate(pressurePlatePrefab, grid.GetWorldPositionOfCellCenter(data.position.x, data.position.y), Quaternion.identity, levelObjectsParent);
+            spawnedPlates[data.position] = go;
+        }
 
+        // Lift Gates
+        foreach (var data in levelData.liftGates)
+        {
+            GameObject go = Instantiate(liftGatePrefab, grid.GetWorldPositionOfCellCenter(data.position.x, data.position.y), Quaternion.identity, levelObjectsParent);
+            spawnedLiftGates[data.position] = go;
+        }
 
+        // Laser Gates
+        foreach (var data in levelData.laserGates)
+        {
+            GameObject go = Instantiate(laserGatePrefab, grid.GetWorldPositionOfCellCenter(data.position.x, data.position.y), Quaternion.identity, levelObjectsParent);
+            spawnedLaserGates[data.position] = go;
+        }
 
-	/// <summary>
-	/// In OnDestroy, we unsubscribe from the events to prevent errors or memory leaks.
-	/// </summary>
-	private void OnDestroy()
-	{
-		if (GameManager.Instance != null)
-		{
-			// Unsubscribe our methods from the events.
-			GameManager.Instance.OnLevelLoaded -= DrawLevelVisuals;
-			GameManager.Instance.OnFruitEaten -= OnFruitEatenHandler;
-			GameManager.Instance.OnFruitSpawned -= OnFruitSpawnedHandler;
-			GameManager.Instance.OnExitRemoved -= OnExitRemovedHandler;
-			GameManager.Instance.OnBoxMoved -= OnBoxMovedHandler;
-			GameManager.Instance.OnIceCubeMoved -= OnIceCubeMovedHandler;
-			GameManager.Instance.OnGateStateChanged -= OnGateStateChangedHandler;
-			GameManager.Instance.OnPlateStateChanged -= OnPlateStateChangedHandler;
-		}
-	}
+        // Portals
+        foreach (var data in levelData.portals)
+        {
+            Vector3 pos = grid.GetWorldPositionOfCellCenter(data.position.x, data.position.y);
+            pos.y = 0.01f;
+            GameObject go = Instantiate(portalPrefab, pos, Quaternion.identity, levelObjectsParent);
+            
+            var renderer = go.GetComponentInChildren<Renderer>();
+            if (renderer != null)
+            {
+                Color c = Color.white;
+                switch (data.colorId)
+                {
+                    case PortalColor.Orange: c = new Color(1f, 0.5f, 0f); break;
+                    case PortalColor.Cyan: c = Color.cyan; break;
+                    case PortalColor.Magenta: c = Color.magenta; break;
+                }
+                renderer.material.color = c;
+            }
+            spawnedPortals[data.position] = go;
+        }
+    }
 
-	/// <summary>
-	/// The main drawing function, called when a new level is loaded.
-	/// It reads the level data and instantiates all the necessary prefabs.
-	/// </summary>
-	private void DrawLevelVisuals(Level_SO levelData)
-	{
-		// First, destroy all old visuals from the previous level.
-		ClearVisuals();
-		var grid = GameManager.Instance.grid;
+    // --- Handlers ---
 
-		// Draw Walls
-		foreach (var wallPos in levelData.wallPositions)
-		{
-			Vector3 worldPos = grid.GetWorldPositionOfCellCenter(wallPos.x, wallPos.y);
-			Instantiate(wallPrefab, worldPos, Quaternion.identity, levelObjectsParent);
+    private void OnBoxMovedHandler(Vector2Int from, Vector2Int to)
+    {
+        if (spawnedBoxes.ContainsKey(from))
+        {
+            GameObject go = spawnedBoxes[from];
+            spawnedBoxes.Remove(from);
+            spawnedBoxes[to] = go;
+            Vector3 targetPos = GameManager.Instance.grid.GetWorldPositionOfCellCenter(to.x, to.y);
+            go.transform.DOMove(targetPos, boxMoveDuration).SetEase(Ease.Linear);
+        }
+    }
 
-		}
+    private void OnIceCubeMovedHandler(Vector2Int from, Vector2Int to)
+    {
+        if (spawnedIceCubes.ContainsKey(from))
+        {
+            GameObject go = spawnedIceCubes[from];
+            spawnedIceCubes.Remove(from);
+            spawnedIceCubes[to] = go;
+            Vector3 targetPos = GameManager.Instance.grid.GetWorldPositionOfCellCenter(to.x, to.y);
+            go.transform.DOMove(targetPos, iceCubeMoveDuration).SetEase(Ease.Linear);
+        }
+    }
 
+    private void OnFruitSpawnedHandler(FruitData data) => DrawFruitVisuals(data);
 
-		// Draw Holes
-		foreach (var holePos in levelData.holePositions)
-		{
-			Vector3 worldPos = grid.GetWorldPositionOfCellCenter(holePos.x, holePos.y);
-			GameObject holeGO = Instantiate(holePrefab, worldPos, Quaternion.identity, levelObjectsParent);
+    private void OnExitRemovedHandler(Vector2Int pos)
+    {
+        if (spawnedExits.ContainsKey(pos)) { Destroy(spawnedExits[pos]); spawnedExits.Remove(pos); }
+    }
 
-			spawnedHoles[holePos] = holeGO;
+    private void OnFruitEatenHandler(FruitData data)
+    {
+        if (spawnedFruits.ContainsKey(data.position)) { Destroy(spawnedFruits[data.position]); spawnedFruits.Remove(data.position); }
+    }
 
-		}
+    private void Instance_OnHoleFilled(Vector2Int holePos, Vector2Int fillerPos)
+    {
+        if (spawnedBoxes.ContainsKey(fillerPos)) { Destroy(spawnedBoxes[fillerPos]); spawnedBoxes.Remove(fillerPos); }
+        else if (spawnedIceCubes.ContainsKey(fillerPos)) { Destroy(spawnedIceCubes[fillerPos]); spawnedIceCubes.Remove(fillerPos); }
+        
+        if (holePos != Vector2Int.zero && spawnedHoles.ContainsKey(holePos))
+        {
+            Destroy(spawnedHoles[holePos]);
+            spawnedHoles.Remove(holePos);
+        }
+    }
 
-		// Draw Exits
-		foreach (var exitData in levelData.exits)
-		{
-			Vector3 worldPos = grid.GetWorldPositionOfCellCenter(exitData.position.x, exitData.position.y);
-			GameObject exitGO = Instantiate(exitPrefab, worldPos, Quaternion.identity, levelObjectsParent);
-			// Store a reference to the spawned exit GameObject in our dictionary.
-			spawnedExits[exitData.position] = exitGO;
-		}
+    // Fixed: Correctly named handler for Laser Gates
+    private void OnLaserGateStateChangedHandler(LaserGateData data, bool isActive)
+    {
+        if (spawnedLaserGates.TryGetValue(data.position, out GameObject go))
+        {
+            // Active = Beam Visible
+            go.SetActive(isActive);
+        }
+    }
 
-		// Draw initial Fruits
-		foreach (var fruitData in levelData.fruits)
-		{
-			// Use the helper function to handle the more complex logic of drawing fruits.
-			DrawFruitVisuals(fruitData);
-		}
+    // Fixed: Correctly named handler for Lift Gates
+    private void OnLiftGateStateChangedHandler(LiftGateData data, bool isOpen)
+    {
+        if (spawnedLiftGates.TryGetValue(data.position, out GameObject go))
+        {
+            // Open = Gate Down/Invisible
+            go.SetActive(!isOpen);
+        }
+    }
 
-		// Draw initial Boxes
-		foreach (var boxPos in levelData.boxPositions)
-		{
-			Vector3 worldPos = grid.GetWorldPositionOfCellCenter(boxPos.x, boxPos.y);
-			GameObject boxGO = Instantiate(boxPrefab, worldPos, Quaternion.identity, levelObjectsParent);
-			// Store a reference to the spawned box GameObject.
-			spawnedBoxes[boxPos] = boxGO;
-		}
-		// Draw initial IceCubes
-		foreach (var iceCubesPos in levelData.iceCubePositions)
-		{
-			Vector3 worldPos = grid.GetWorldPositionOfCellCenter(iceCubesPos.x, iceCubesPos.y);
-			GameObject iceCubeGO = Instantiate(iceCubePrefab, worldPos, Quaternion.identity, levelObjectsParent);
-			// Store a reference to the spawned box GameObject.
-			spawnedIceCubes[iceCubesPos] = iceCubeGO;
-		}
-		foreach (var plateData in levelData.pressurePlates)
-		{
-			Vector3 worldPos = grid.GetWorldPositionOfCellCenter(plateData.position.x, plateData.position.y);
-			GameObject plateGO = Instantiate(pressurePlatePrefab, worldPos, Quaternion.identity, levelObjectsParent);
-			spawnedPlates[plateData.position] = plateGO;
-		}
+    private void OnPlateStateChangedHandler(PressurePlateData data, bool isActive)
+    {
+        if (spawnedPlates.TryGetValue(data.position, out GameObject go))
+        {
+            float targetY = isActive ? go.transform.position.y - 0.1f : 0f;
+            go.transform.DOMoveY(targetY, plateMoveDuration).SetEase(Ease.OutQuad);
+        }
+    }
 
-		// Draw Pressure Plates (Optional Visuals)
-		// foreach (var plateData in levelData.pressurePlates)
-		// {
-		// 	Vector3 worldPos = grid.GetWorldPositionOfCellCenter(plateData.position.x, plateData.position.y);
-		// 	Instantiate(pressurePlatePrefab, worldPos, Quaternion.identity, levelObjectsParent);
-		// }
+    private void ClearVisuals()
+    {
+        foreach (Transform child in levelObjectsParent) Destroy(child.gameObject);
+        spawnedExits.Clear();
+        spawnedFruits.Clear();
+        spawnedBoxes.Clear();
+        spawnedIceCubes.Clear();
+        spawnedHoles.Clear();
+        spawnedPlates.Clear();
+        spawnedLiftGates.Clear();
+        spawnedLaserGates.Clear();
+        spawnedPortals.Clear();
+    }
 
-		foreach (var gateData in levelData.liftGates)
-		{
-			Vector3 worldPos = grid.GetWorldPositionOfCellCenter(gateData.position.x, gateData.position.y);
-			GameObject gateGO = Instantiate(liftGatePrefab, worldPos, Quaternion.identity, levelObjectsParent);
-			spawnedLiftGates[gateData.position] = gateGO;
-		}
-		// Draw Laser Gates
-		foreach (var laserData in levelData.laserGates)
-		{
-			Vector3 worldPos = grid.GetWorldPositionOfCellCenter(laserData.position.x, laserData.position.y);
-			GameObject laserGO = Instantiate(laserGatePrefab, worldPos, Quaternion.identity, levelObjectsParent);
-			spawnedLaserGates[laserData.position] = laserGO;
-		}
+    private void DrawFruitVisuals(FruitData data)
+    {
+        Vector3 pos = GameManager.Instance.grid.GetWorldPositionOfCellCenter(data.position.x, data.position.y);
+        GameObject go = Instantiate(fruitPrefab, pos, Quaternion.identity, levelObjectsParent);
+        
+        MeshRenderer[] renderers = go.GetComponentsInChildren<MeshRenderer>();
+        if (data.colors.Count == 1)
+        {
+            Color c = GetEngineColor(data.colors[0]);
+            foreach (var r in renderers) r.material.color = c;
+        }
+        else
+        {
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                if (i < data.colors.Count) renderers[i].material.color = GetEngineColor(data.colors[i]);
+            }
+        }
+        spawnedFruits[data.position] = go;
+    }
 
-		foreach (var portalData in levelData.portals)
-		{
-			Vector3 worldPos = grid.GetWorldPositionOfCellCenter(portalData.position.x, portalData.position.y);
-			// Slightly offset Y if needed to prevent z-fighting with floor, or keep at 0
-			worldPos.y = 0.01f;
-
-			GameObject portalGO = Instantiate(portalPrefab, worldPos, Quaternion.identity, levelObjectsParent);
-
-			// Color the portal based on ID
-			var renderer = portalGO.GetComponentInChildren<Renderer>();
-			if (renderer != null)
-			{
-				Color c = Color.white;
-				switch (portalData.colorId)
-				{
-					case PortalColor.Orange: c = new Color(1f, 0.5f, 0f); break; // Orange
-					case PortalColor.Cyan: c = Color.cyan; break;
-					case PortalColor.Magenta: c = Color.magenta; break;
-				}
-				renderer.material.color = c;
-			}
-			spawnedPortals[portalData.position] = portalGO;
-		}
-	}
-
-	// --- EVENT HANDLERS ---
-
-	/// <summary>
-	/// Handles the animation for a pushed box.
-	/// </summary>
-	private void OnBoxMovedHandler(Vector2Int from, Vector2Int to)
-	{
-		// Check if we have a visual for the box at its starting position.
-		if (spawnedBoxes.ContainsKey(from))
-		{
-			GameObject boxGO = spawnedBoxes[from];
-
-			// IMPORTANT: Update the dictionary to track the box at its new grid position.
-			spawnedBoxes.Remove(from);
-			spawnedBoxes[to] = boxGO;
-
-			// Animate the movement using DOTween.
-			Vector3 targetWorldPos = GameManager.Instance.grid.GetWorldPositionOfCellCenter(to.x, to.y);
-			boxGO.transform.DOMove(targetWorldPos, boxMoveDuration).SetEase(Ease.Linear);
-		}
-	}
-	private void OnIceCubeMovedHandler(Vector2Int from, Vector2Int to)
-	{
-		// Check if we have a visual for the box at its starting position.
-		if (spawnedIceCubes.ContainsKey(from))
-		{
-			GameObject iceCube = spawnedIceCubes[from];
-
-			// IMPORTANT: Update the dictionary to track the box at its new grid position.
-			spawnedIceCubes.Remove(from);
-			spawnedIceCubes[to] = iceCube;
-
-			// Animate the movement using DOTween.
-			Vector3 targetWorldPos = GameManager.Instance.grid.GetWorldPositionOfCellCenter(to.x, to.y);
-			iceCube.transform.DOMove(targetWorldPos, iceCubeMoveDuration).SetEase(Ease.Linear);
-		}
-	}
-
-	/// <summary>
-	/// Handles drawing a fruit that spawns mid-game (e.g., after a snake exits).
-	/// </summary>
-	private void OnFruitSpawnedHandler(FruitData fruitData)
-	{
-		DrawFruitVisuals(fruitData);
-	}
-
-	/// <summary>
-	/// Handles destroying the visual of an exit that has been used.
-	/// </summary>
-	private void OnExitRemovedHandler(Vector2Int position)
-	{
-		if (spawnedExits.ContainsKey(position))
-		{
-			Destroy(spawnedExits[position]);
-			spawnedExits.Remove(position);
-		}
-	}
-
-	/// <summary>
-	/// Handles destroying the visual of a fruit that has been eaten.
-	/// </summary>
-	private void OnFruitEatenHandler(FruitData eatenFruit)
-	{
-		Vector2Int position = eatenFruit.position;
-		if (spawnedFruits.ContainsKey(position))
-		{
-			Destroy(spawnedFruits[position]);
-			spawnedFruits.Remove(position);
-		}
-	}
-
-	/// <summary>
-	/// Handles visually opening or closing a laser gate.
-	/// </summary>
-	private void OnGateStateChangedHandler(LaserGateData gateData, bool isOpen)
-	{
-		if (spawnedLaserGates.ContainsKey(gateData.position))
-		{
-			GameObject gateGO = spawnedLaserGates[gateData.position];
-			// The simplest visual change is to just activate/deactivate the GameObject.
-			// True (open) means the gate should be invisible/inactive.
-			// False (closed) means the gate should be visible/active.
-			gateGO.SetActive(!isOpen);
-		}
-	}
-	private void OnPlateStateChangedHandler(PressurePlateData plateData, bool isActive)
-	{
-		if (spawnedPlates.TryGetValue(plateData.position, out GameObject plateGO))
-		{
-			// Animate the plate moving down when active, and to its original height when inactive.
-			float targetY = isActive ? plateGO.transform.position.y - 0.1f : 0f;
-			plateGO.transform.DOMoveY(targetY, plateMoveDuration).SetEase(Ease.OutQuad);
-		}
-	}
-	// --- HELPER METHODS ---
-
-	/// <summary>
-	/// Clears all spawned objects and dictionaries to prepare for a new level.
-	/// </summary>
-	private void ClearVisuals()
-	{
-		// A safe way to destroy all children of a Transform.
-		foreach (Transform child in levelObjectsParent)
-		{
-			Destroy(child.gameObject);
-		}
-		// Clear all tracking dictionaries.
-		spawnedExits.Clear();
-		spawnedFruits.Clear();
-		spawnedBoxes.Clear();
-		spawnedHoles.Clear();
-		spawnedIceCubes.Clear();
-		spawnedLaserGates.Clear();
-		spawnedPortals.Clear();
-		spawnedPlates.Clear();
-	}
-
-	/// <summary>
-	/// Handles the specific logic for instantiating and coloring a fruit prefab.
-	/// </summary>
-	private void DrawFruitVisuals(FruitData fruitData)
-	{
-		var grid = GameManager.Instance.grid;
-		Vector3 worldPos = grid.GetWorldPositionOfCellCenter(fruitData.position.x, fruitData.position.y);
-		GameObject fruitGO = Instantiate(fruitPrefab, worldPos, Quaternion.identity, levelObjectsParent);
-
-		// If the fruit is multi-colored, add a rotator component to make it spin.
-		if (fruitData.colors.Count > 1)
-		{
-			// You would need to create a simple Rotator script for this to work.
-			// Example:
-			// public class Rotator : MonoBehaviour {
-			//     void Update() { transform.Rotate(0, 90 * Time.deltaTime, 0); }
-			// }
-			// fruitGO.AddComponent<Rotator>();
-		}
-
-		// Get all the MeshRenderer components in the fruit prefab and its children.
-		// This allows for multi-part fruit models.
-		MeshRenderer[] renderers = fruitGO.GetComponentsInChildren<MeshRenderer>();
-
-		if (fruitData.colors.Count == 1)
-		{
-			// If it's a single-color fruit, color all parts with that color.
-			Color singleColor = GetEngineColor(fruitData.colors[0]);
-			foreach (var renderer in renderers)
-			{
-				renderer.material.color = singleColor;
-			}
-		}
-		else
-		{
-			// If it's a multi-color fruit, color each part with a different color from the list.
-			for (int i = 0; i < renderers.Length; i++)
-			{
-				if (i < fruitData.colors.Count)
-				{
-					renderers[i].material.color = GetEngineColor(fruitData.colors[i]);
-				}
-			}
-		}
-
-		// Store the new fruit's GameObject in our dictionary for later reference.
-		spawnedFruits[fruitData.position] = fruitGO;
-	}
-
-
-	private void Instance_OnHoleFilled(Vector2Int holepos, Vector2Int fillerpos)
-	{
-
-		if (spawnedBoxes.ContainsKey(fillerpos))
-		{
-			Destroy(spawnedBoxes[fillerpos]);
-			spawnedBoxes.Remove(fillerpos);
-		}
-		else if (spawnedIceCubes.ContainsKey(fillerpos))
-		{
-			Destroy(spawnedIceCubes[fillerpos]);
-			spawnedIceCubes.Remove(fillerpos);
-		}
-		else
-		{
-			Debug.LogError("Error at OnholeFilled dictionaries didnt contain key" + fillerpos);
-		}
-		if (holepos != Vector2Int.zero) // A simple check to avoid error on null
-		{
-			if (spawnedHoles.ContainsKey(holepos))
-			{
-				Destroy(spawnedHoles[holepos]);
-				spawnedHoles.Remove(holepos);
-			}
-		}
-
-	}
-	
-	private void OnLiftGateStateChangedHandler(LiftGateData data, bool isOpen)
-	{
-		if (spawnedLiftGates.TryGetValue(data.position, out GameObject go))
-		{
-			// If Open -> Physical wall goes down (Inactive/Invisible)
-			go.SetActive(!isOpen); 
-		}
-	}
-
-	private void OnLaserGateStateChangedHandler(LaserGateData data, bool isActive)
-	{
-		if (spawnedLaserGates.TryGetValue(data.position, out GameObject go))
-		{
-			// If Active -> Beam is Visible
-			go.SetActive(isActive);
-		}
-	}
-
-
-	/// <summary>
-	/// A utility function to convert our custom ColorType enum into a Unity Engine Color.
-	/// </summary>
-	private Color GetEngineColor(ColorType colorType)
-	{
-		switch (colorType)
-		{
-			case ColorType.Red: return Color.red;
-			case ColorType.Blue: return Color.blue;
-			case ColorType.Green: return Color.green;
-			case ColorType.Yellow: return Color.yellow;
-			default: return Color.white;
-		}
-	}
+    private Color GetEngineColor(ColorType type)
+    {
+        switch (type)
+        {
+            case ColorType.Red: return Color.red;
+            case ColorType.Blue: return Color.blue;
+            case ColorType.Green: return Color.green;
+            case ColorType.Yellow: return Color.yellow;
+            default: return Color.white;
+        }
+    }
 }

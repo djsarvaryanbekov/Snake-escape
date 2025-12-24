@@ -62,6 +62,7 @@
     <Compile Include="Assets\Scripts\GameManager.cs" />
     <Compile Include="Assets\Scripts\Level_SO.cs" />
     <None Include="Assets\Scripts\gdd.txt" />
+    <None Include="Assets\Scripts\ALLCODE.txt" />
     <Reference Include="UnityEngine">
       <HintPath>C:\Program Files\Unity\Hub\Editor\6000.0.63f1\Editor\Data\Managed\UnityEngine\UnityEngine.dll</HintPath>
     </Reference>
