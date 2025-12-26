@@ -33,12 +33,21 @@ public class PlayerController : MonoBehaviour
 
 	private void Awake()
 	{
-		// Start in the UI state, assuming the game might begin with a menu or loading screen.
 		currentState = State.UI;
+		levelManager.OnLevelStarted += LevelManager_OnLevelStarted;
+		GameManager.Instance.LevelWin += Instance_LevelWin;
+        
+		// NEW: Subscribe to Death Event
+		GameManager.Instance.OnSnakeDied += Instance_OnSnakeDied;
+	}
 
-		// Subscribe to events. This is how other systems communicate with the controller.
-		levelManager.OnLevelStarted += LevelManager_OnLevelStarted; // When a level starts, we should switch to the 'Idle' state.
-		GameManager.Instance.LevelWin += Instance_LevelWin;       // When the level is won, we should switch to the 'UI' state.
+	private void Instance_OnSnakeDied(Snake deadSnake)
+	{
+		// If the snake we are currently dragging just died...
+		if (selectedSnake == deadSnake)
+		{
+			StopDragging(); // Release it immediately
+		}
 	}
 
 	/// <summary>

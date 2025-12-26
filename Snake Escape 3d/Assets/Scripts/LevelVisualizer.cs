@@ -22,7 +22,6 @@ public class LevelVisualizer : MonoBehaviour
     [SerializeField] private float iceCubeMoveDuration = 0.15f;
     [SerializeField] private float plateMoveDuration = 0.1f;
 
-    // Dictionary tracking
     private Dictionary<Vector2Int, GameObject> spawnedExits = new Dictionary<Vector2Int, GameObject>();
     private Dictionary<Vector2Int, GameObject> spawnedFruits = new Dictionary<Vector2Int, GameObject>();
     private Dictionary<Vector2Int, GameObject> spawnedBoxes = new Dictionary<Vector2Int, GameObject>();
@@ -44,12 +43,10 @@ public class LevelVisualizer : MonoBehaviour
         GameManager.Instance.OnBoxMoved += OnBoxMovedHandler;
         GameManager.Instance.OnIceCubeMoved += OnIceCubeMovedHandler;
         GameManager.Instance.OnHoleFilled += Instance_OnHoleFilled;
-        
-        // NEW: Specific gate events
         GameManager.Instance.OnLiftGateStateChanged += OnLiftGateStateChangedHandler;
         GameManager.Instance.OnLaserGateStateChanged += OnLaserGateStateChangedHandler;
-        
         GameManager.Instance.OnPlateStateChanged += OnPlateStateChangedHandler;
+        GameManager.Instance.OnPortalStateChanged += OnPortalStateChangedHandler;
     }
 
     private void OnDestroy()
@@ -63,12 +60,10 @@ public class LevelVisualizer : MonoBehaviour
             GameManager.Instance.OnBoxMoved -= OnBoxMovedHandler;
             GameManager.Instance.OnIceCubeMoved -= OnIceCubeMovedHandler;
             GameManager.Instance.OnHoleFilled -= Instance_OnHoleFilled;
-            
-            // NEW: Correct unsubscribes
             GameManager.Instance.OnLiftGateStateChanged -= OnLiftGateStateChangedHandler;
             GameManager.Instance.OnLaserGateStateChanged -= OnLaserGateStateChangedHandler;
-            
             GameManager.Instance.OnPlateStateChanged -= OnPlateStateChangedHandler;
+            GameManager.Instance.OnPortalStateChanged -= OnPortalStateChangedHandler;
         }
     }
 
@@ -77,65 +72,32 @@ public class LevelVisualizer : MonoBehaviour
         ClearVisuals();
         var grid = GameManager.Instance.grid;
 
-        // Walls
         foreach (var wallPos in levelData.wallPositions)
-        {
             Instantiate(wallPrefab, grid.GetWorldPositionOfCellCenter(wallPos.x, wallPos.y), Quaternion.identity, levelObjectsParent);
-        }
 
-        // Holes
         foreach (var holePos in levelData.holePositions)
-        {
-            GameObject go = Instantiate(holePrefab, grid.GetWorldPositionOfCellCenter(holePos.x, holePos.y), Quaternion.identity, levelObjectsParent);
-            spawnedHoles[holePos] = go;
-        }
+            spawnedHoles[holePos] = Instantiate(holePrefab, grid.GetWorldPositionOfCellCenter(holePos.x, holePos.y), Quaternion.identity, levelObjectsParent);
 
-        // Exits
         foreach (var exitData in levelData.exits)
-        {
-            GameObject go = Instantiate(exitPrefab, grid.GetWorldPositionOfCellCenter(exitData.position.x, exitData.position.y), Quaternion.identity, levelObjectsParent);
-            spawnedExits[exitData.position] = go;
-        }
+            spawnedExits[exitData.position] = Instantiate(exitPrefab, grid.GetWorldPositionOfCellCenter(exitData.position.x, exitData.position.y), Quaternion.identity, levelObjectsParent);
 
-        // Fruits
         foreach (var fruitData in levelData.fruits) DrawFruitVisuals(fruitData);
 
-        // Boxes
         foreach (var pos in levelData.boxPositions)
-        {
-            GameObject go = Instantiate(boxPrefab, grid.GetWorldPositionOfCellCenter(pos.x, pos.y), Quaternion.identity, levelObjectsParent);
-            spawnedBoxes[pos] = go;
-        }
+            spawnedBoxes[pos] = Instantiate(boxPrefab, grid.GetWorldPositionOfCellCenter(pos.x, pos.y), Quaternion.identity, levelObjectsParent);
 
-        // Ice Cubes
         foreach (var pos in levelData.iceCubePositions)
-        {
-            GameObject go = Instantiate(iceCubePrefab, grid.GetWorldPositionOfCellCenter(pos.x, pos.y), Quaternion.identity, levelObjectsParent);
-            spawnedIceCubes[pos] = go;
-        }
+            spawnedIceCubes[pos] = Instantiate(iceCubePrefab, grid.GetWorldPositionOfCellCenter(pos.x, pos.y), Quaternion.identity, levelObjectsParent);
 
-        // Plates
         foreach (var data in levelData.pressurePlates)
-        {
-            GameObject go = Instantiate(pressurePlatePrefab, grid.GetWorldPositionOfCellCenter(data.position.x, data.position.y), Quaternion.identity, levelObjectsParent);
-            spawnedPlates[data.position] = go;
-        }
+            spawnedPlates[data.position] = Instantiate(pressurePlatePrefab, grid.GetWorldPositionOfCellCenter(data.position.x, data.position.y), Quaternion.identity, levelObjectsParent);
 
-        // Lift Gates
         foreach (var data in levelData.liftGates)
-        {
-            GameObject go = Instantiate(liftGatePrefab, grid.GetWorldPositionOfCellCenter(data.position.x, data.position.y), Quaternion.identity, levelObjectsParent);
-            spawnedLiftGates[data.position] = go;
-        }
+            spawnedLiftGates[data.position] = Instantiate(liftGatePrefab, grid.GetWorldPositionOfCellCenter(data.position.x, data.position.y), Quaternion.identity, levelObjectsParent);
 
-        // Laser Gates
         foreach (var data in levelData.laserGates)
-        {
-            GameObject go = Instantiate(laserGatePrefab, grid.GetWorldPositionOfCellCenter(data.position.x, data.position.y), Quaternion.identity, levelObjectsParent);
-            spawnedLaserGates[data.position] = go;
-        }
+            spawnedLaserGates[data.position] = Instantiate(laserGatePrefab, grid.GetWorldPositionOfCellCenter(data.position.x, data.position.y), Quaternion.identity, levelObjectsParent);
 
-        // Portals
         foreach (var data in levelData.portals)
         {
             Vector3 pos = grid.GetWorldPositionOfCellCenter(data.position.x, data.position.y);
@@ -158,8 +120,6 @@ public class LevelVisualizer : MonoBehaviour
         }
     }
 
-    // --- Handlers ---
-
     private void OnBoxMovedHandler(Vector2Int from, Vector2Int to)
     {
         if (spawnedBoxes.ContainsKey(from))
@@ -167,8 +127,14 @@ public class LevelVisualizer : MonoBehaviour
             GameObject go = spawnedBoxes[from];
             spawnedBoxes.Remove(from);
             spawnedBoxes[to] = go;
+            
             Vector3 targetPos = GameManager.Instance.grid.GetWorldPositionOfCellCenter(to.x, to.y);
-            go.transform.DOMove(targetPos, boxMoveDuration).SetEase(Ease.Linear);
+            float dist = Vector3.Distance(go.transform.position, targetPos);
+            
+            if (dist > GameManager.Instance.grid.GetCellSize() * 1.5f)
+                go.transform.position = targetPos; // Snap (Teleport)
+            else
+                go.transform.DOMove(targetPos, boxMoveDuration).SetEase(Ease.Linear);
         }
     }
 
@@ -179,8 +145,14 @@ public class LevelVisualizer : MonoBehaviour
             GameObject go = spawnedIceCubes[from];
             spawnedIceCubes.Remove(from);
             spawnedIceCubes[to] = go;
+            
             Vector3 targetPos = GameManager.Instance.grid.GetWorldPositionOfCellCenter(to.x, to.y);
-            go.transform.DOMove(targetPos, iceCubeMoveDuration).SetEase(Ease.Linear);
+            float dist = Vector3.Distance(go.transform.position, targetPos);
+            
+            if (dist > GameManager.Instance.grid.GetCellSize() * 1.5f)
+                go.transform.position = targetPos; // Snap (Teleport)
+            else
+                go.transform.DOMove(targetPos, iceCubeMoveDuration).SetEase(Ease.Linear);
         }
     }
 
@@ -208,24 +180,14 @@ public class LevelVisualizer : MonoBehaviour
         }
     }
 
-    // Fixed: Correctly named handler for Laser Gates
     private void OnLaserGateStateChangedHandler(LaserGateData data, bool isActive)
     {
-        if (spawnedLaserGates.TryGetValue(data.position, out GameObject go))
-        {
-            // Active = Beam Visible
-            go.SetActive(isActive);
-        }
+        if (spawnedLaserGates.TryGetValue(data.position, out GameObject go)) go.SetActive(isActive);
     }
 
-    // Fixed: Correctly named handler for Lift Gates
     private void OnLiftGateStateChangedHandler(LiftGateData data, bool isOpen)
     {
-        if (spawnedLiftGates.TryGetValue(data.position, out GameObject go))
-        {
-            // Open = Gate Down/Invisible
-            go.SetActive(!isOpen);
-        }
+        if (spawnedLiftGates.TryGetValue(data.position, out GameObject go)) go.SetActive(!isOpen);
     }
 
     private void OnPlateStateChangedHandler(PressurePlateData data, bool isActive)
@@ -234,6 +196,15 @@ public class LevelVisualizer : MonoBehaviour
         {
             float targetY = isActive ? go.transform.position.y - 0.1f : 0f;
             go.transform.DOMoveY(targetY, plateMoveDuration).SetEase(Ease.OutQuad);
+        }
+    }
+
+    private void OnPortalStateChangedHandler(PortalData data, bool isActive)
+    {
+        if (spawnedPortals.TryGetValue(data.position, out GameObject go))
+        {
+            if (go.transform.childCount > 0)
+                go.transform.GetChild(1).gameObject.SetActive(isActive);
         }
     }
 
@@ -250,25 +221,44 @@ public class LevelVisualizer : MonoBehaviour
         spawnedLaserGates.Clear();
         spawnedPortals.Clear();
     }
-
     private void DrawFruitVisuals(FruitData data)
     {
         Vector3 pos = GameManager.Instance.grid.GetWorldPositionOfCellCenter(data.position.x, data.position.y);
         GameObject go = Instantiate(fruitPrefab, pos, Quaternion.identity, levelObjectsParent);
         
+        // Get all renderers (MeshRenderer) in the prefab
         MeshRenderer[] renderers = go.GetComponentsInChildren<MeshRenderer>();
+        
+        // CASE 1: Single Color Fruit (Red, Green, Blue)
+        // We want to color the WHOLE object this color, regardless of how many parts it has.
         if (data.colors.Count == 1)
         {
-            Color c = GetEngineColor(data.colors[0]);
-            foreach (var r in renderers) r.material.color = c;
+            Color singleColor = GetEngineColor(data.colors[0]);
+            foreach (var r in renderers)
+            {
+                r.material.color = singleColor;
+            }
         }
+        // CASE 2: Multi-Color Fruit (Red-Green, Blue-Yellow)
+        // We assign colors sequentially to the parts.
         else
         {
             for (int i = 0; i < renderers.Length; i++)
             {
-                if (i < data.colors.Count) renderers[i].material.color = GetEngineColor(data.colors[i]);
+                // If we have a color defined for this part index, use it.
+                if (i < data.colors.Count)
+                {
+                    renderers[i].material.color = GetEngineColor(data.colors[i]);
+                }
+                else
+                {
+                    // If the prefab has more parts than colors (e.g. 3 parts, 2 colors),
+                    // color the extra parts with the last available color.
+                    renderers[i].material.color = GetEngineColor(data.colors[data.colors.Count - 1]);
+                }
             }
         }
+        
         spawnedFruits[data.position] = go;
     }
 
@@ -283,7 +273,4 @@ public class LevelVisualizer : MonoBehaviour
             default: return Color.white;
         }
     }
-    
-    
-    
 }

@@ -15,17 +15,21 @@ public class GameManager : MonoBehaviour
     public event EventHandler LevelWin;
     public event EventHandler ReloadLevel;
     public event Action<Level_SO> OnLevelLoaded;
+    
+    // Object Events
     public event Action<FruitData> OnFruitEaten;
     public event Action<FruitData> OnFruitSpawned;
     public event Action<Vector2Int> OnExitRemoved;
     public event Action<Vector2Int, Vector2Int> OnBoxMoved;
     public event Action<Vector2Int, Vector2Int> OnIceCubeMoved;
     public event Action<Vector2Int, Vector2Int> OnHoleFilled;
-    public event Action<PressurePlateData, bool> OnPlateStateChanged;
     
-    // Gate Events
+    // Logic Events
+    public event Action<PressurePlateData, bool> OnPlateStateChanged;
     public event Action<LiftGateData, bool> OnLiftGateStateChanged;
     public event Action<LaserGateData, bool> OnLaserGateStateChanged;
+    public event Action<PortalData, bool> OnPortalStateChanged;
+    public event Action<Snake> OnSnakeDied;
 
     [HideInInspector] public Grid grid { get; set; }
     [HideInInspector] public List<Snake> snakesOnLevel { get; private set; } = new List<Snake>();
@@ -35,6 +39,9 @@ public class GameManager : MonoBehaviour
     private Dictionary<PlateColor, List<LiftGate>> liftGatesByColor = new Dictionary<PlateColor, List<LiftGate>>();
     private Dictionary<PlateColor, List<LaserGate>> laserGatesByColor = new Dictionary<PlateColor, List<LaserGate>>();
     private List<Portal> allPortals = new List<Portal>();
+    
+    // State tracking to prevent event spam
+    private Dictionary<Portal, bool> portalStates = new Dictionary<Portal, bool>();
 
     private void Awake()
     {
@@ -48,7 +55,6 @@ public class GameManager : MonoBehaviour
     {
         LinkPortals();
         OnLevelLoaded?.Invoke(data);
-        // Initial state check
         RefreshGameState();
     }
 
@@ -56,10 +62,9 @@ public class GameManager : MonoBehaviour
     {
         if (!platesByColor.ContainsKey(data.color)) platesByColor[data.color] = new List<PressurePlate>();
         platesByColor[data.color].Add(plate);
-        // Note: We no longer subscribe to individual plate triggers for gate logic. 
-        // We update everything centrally to fix the "Gate Stuck" bugs.
-        plate.OnPlateTriggered += (p, active) => OnPlateStateChanged?.Invoke(p.GetData(), active);
         
+        // Connect visual event so plates animate
+        plate.OnPlateTriggered += (p, active) => OnPlateStateChanged?.Invoke(p.GetData(), active);
     }
 
     public void RegisterLiftGate(LiftGate gate, LiftGateData data)
@@ -76,19 +81,15 @@ public class GameManager : MonoBehaviour
 
     public void RegisterPortal(Portal portal) => allPortals.Add(portal);
 
-    // --- State Management (The Fix) ---
+    // --- State Management ---
 
-    /// <summary>
-    /// Call this whenever ANY object moves on the grid.
-    /// It updates Plates first, then checks if Gates should Open/Close based on the new Plate states.
-    /// </summary>
     public void RefreshGameState()
     {
         UpdateAllPlateStates();
         UpdateAllGateStates();
+        UpdatePortalStates();
     }
     
-    // Kept for Snake.cs compatibility if it calls ReportSnakeMoved
     public void ReportSnakeMoved() => RefreshGameState();
 
     private void UpdateAllPlateStates()
@@ -109,7 +110,6 @@ public class GameManager : MonoBehaviour
         // 1. HANDLE LIFT GATES (Physical)
         foreach (var color in liftGatesByColor.Keys)
         {
-            // Check if ALL plates of this color are active
             bool allPlatesActive = false;
             if (platesByColor.ContainsKey(color) && platesByColor[color].Count > 0)
             {
@@ -122,7 +122,6 @@ public class GameManager : MonoBehaviour
 
                 if (allPlatesActive)
                 {
-                    // Open Condition Met
                     if (!gate.IsOpen)
                     {
                         gate.Open();
@@ -131,11 +130,10 @@ public class GameManager : MonoBehaviour
                 }
                 else
                 {
-                    // Close Condition Met
-                    // SAFETY CHECK: Is something standing on the gate?
+                    // Safety Lock: Don't close if something is standing on it
                     if (IsCellOccupied(pos))
                     {
-                        // Something is here! Keep it OPEN (Safety Lock).
+                        // Something is here! Keep it OPEN.
                         if (!gate.IsOpen)
                         {
                             gate.Open();
@@ -155,6 +153,7 @@ public class GameManager : MonoBehaviour
             }
         }
 
+        // 2. HANDLE LASER GATES (Energy)
         foreach (var color in laserGatesByColor.Keys)
         {
             bool allPlatesActive = false;
@@ -165,33 +164,190 @@ public class GameManager : MonoBehaviour
 
             foreach (var laser in laserGatesByColor[color])
             {
+                // Plates Active = Laser OFF (Safe)
                 bool shouldBeActive = !allPlatesActive;
 
                 if (laser.IsActive != shouldBeActive)
                 {
-                    if (shouldBeActive)
+                    if (shouldBeActive) 
                     {
                         laser.Activate();
-                        // TRAP CHECK: Laser just turned ON. Check if anything is inside.
+                        // TRAP LOGIC: Check if something is inside when it turns ON
                         CheckLaserKillZone(laser.GetData().position);
                     }
-                    else
+                    else 
                     {
                         laser.Deactivate();
                     }
-
                     OnLaserGateStateChanged?.Invoke(laser.GetData(), laser.IsActive);
                 }
             }
         }
     }
 
+    private void UpdatePortalStates()
+    {
+        foreach (var portal in allPortals)
+        {
+            bool isActive = portal.IsActive();
+
+            if (!portalStates.ContainsKey(portal) || portalStates[portal] != isActive)
+            {
+                portalStates[portal] = isActive;
+                OnPortalStateChanged?.Invoke(portal.GetData(), isActive);
+            }
+        }
+    }
+
+    // --- Object Interaction & Movement ---
+
+    public void MoveBox(Vector2Int from, Vector2Int to)
+    {
+        Box box = grid.GetObjectOfType<Box>(from);
+        if (box == null) return;
+
+        Vector2Int delta = to - from;
+
+        // Portal Logic
+        Portal portal = grid.GetObjectOfType<Portal>(to);
+        if (portal != null && portal.IsActive())
+        {
+            Vector2Int exitPos = portal.GetLinkedPortal().GetData().position;
+            delta = exitPos - from;
+        }
+
+        MoveGridEntity(box, delta);
+
+        CheckHazards(box); 
+        if (box.OccupiedCells.Count > 0) CheckGravity(box); 
+    }
+
+    public void MoveIceCube(Vector2Int from, Vector2Int to)
+    {
+        IceCube ice = grid.GetObjectOfType<IceCube>(from);
+        if (ice == null) return;
+        
+        Vector2Int delta = to - from;
+
+        MoveGridEntity(ice, delta);
+        
+        CheckHazards(ice);
+        if (ice.OccupiedCells.Count > 0) CheckGravity(ice);
+    }
+
+    private void MoveGridEntity(GridEntity entity, Vector2Int delta)
+    {
+        var grid = this.grid;
+        
+        foreach (var pos in entity.OccupiedCells) grid.RemoveObject(pos.x, pos.y, entity);
+
+        List<Vector2Int> newPositions = new List<Vector2Int>();
+        foreach (var pos in entity.OccupiedCells) newPositions.Add(pos + delta);
+
+        entity.ClearPositions();
+        foreach (var pos in newPositions)
+        {
+            entity.AddPosition(pos);
+            grid.AddObject(pos.x, pos.y, entity);
+        }
+
+        for (int i = 0; i < newPositions.Count; i++)
+        {
+            Vector2Int oldPos = newPositions[i] - delta;
+            if (entity is Box) OnBoxMoved?.Invoke(oldPos, newPositions[i]);
+            else if (entity is IceCube) OnIceCubeMoved?.Invoke(oldPos, newPositions[i]);
+        }
+        
+        RefreshGameState();
+    }
+
+    // --- Hazards & Gravity ---
+
+    private void CheckHazards(GridEntity entity)
+    {
+        foreach (var pos in entity.OccupiedCells)
+        {
+            LaserGate laser = grid.GetObjectOfType<LaserGate>(pos);
+            if (laser != null && laser.IsActive)
+            {
+                DestroyGridEntity(entity);
+                return;
+            }
+        }
+    }
+
+    private void CheckGravity(GridEntity entity)
+    {
+        int supportNeeded = entity.OccupiedCells.Count;
+        int holesFound = 0;
+
+        foreach (var pos in entity.OccupiedCells)
+        {
+            if (grid.HasObjectOfType<Hole>(pos)) holesFound++;
+        }
+
+        if (holesFound == supportNeeded)
+        {
+            foreach (var pos in entity.OccupiedCells)
+            {
+                Hole h = grid.GetObjectOfType<Hole>(pos);
+                if (h != null)
+                {
+                    grid.RemoveObject(pos.x, pos.y, h);
+                    OnHoleFilled?.Invoke(pos, pos);
+                }
+            }
+            DestroyGridEntity(entity);
+        }
+    }
+    
+    private void DestroyGridEntity(GridEntity entity)
+    {
+        foreach (var pos in entity.OccupiedCells)
+        {
+            grid.RemoveObject(pos.x, pos.y, entity);
+        }
+        RefreshGameState();
+        Debug.Log("Grid Entity Destroyed.");
+    }
+
+    private void CheckLaserKillZone(Vector2Int pos)
+    {
+        // Slice Snakes
+        foreach (var snake in snakesOnLevel.ToList())
+        {
+            if (snake.Body.Contains(pos))
+            {
+                snake.SliceAt(pos);
+            }
+        }
+
+        // Destroy Objects
+        var objects = grid.GetObjects(pos);
+        var entity = objects.OfType<GridEntity>().FirstOrDefault();
+        if (entity != null)
+        {
+            DestroyGridEntity(entity);
+        }
+    }
+
+    public void KillSnake(Snake snake)
+    {
+        snake.RemoveFromGame();
+        if (snakesOnLevel.Contains(snake)) snakesOnLevel.Remove(snake);
+        
+        OnSnakeDied?.Invoke(snake);
+        RefreshGameState();
+        Debug.Log("Snake Killed.");
+    }
+    
+    // --- Other Logic ---
 
     public void FillHole(Vector2Int holePos, Vector2Int fillerPos)
     {
         var filler = grid.GetObjects(fillerPos).FirstOrDefault(o => o is Box || o is IceCube);
         if (filler != null) grid.RemoveObject(fillerPos.x, fillerPos.y, filler);
-
+        
         Hole hole = grid.GetObjectOfType<Hole>(holePos);
         if (hole != null) grid.RemoveObject(holePos.x, holePos.y, hole);
 
@@ -205,55 +361,22 @@ public class GameManager : MonoBehaviour
         snakesOnLevel.Remove(snake);
 
         Exit e = grid.GetObjectOfType<Exit>(data.position);
-        if (e != null)
-        {
-            grid.RemoveObject(data.position.x, data.position.y, e);
-        }
+        if (e != null) grid.RemoveObject(data.position.x, data.position.y, e);
+        
         OnExitRemoved?.Invoke(data.position);
-
         SpawnFruitFromRemainingSnakes(data.position);
 
-        if (snakesOnLevel.Count == 0)
-        {
-            LevelWin?.Invoke(this, EventArgs.Empty);
-        }
+        if (snakesOnLevel.Count == 0) LevelWin?.Invoke(this, EventArgs.Empty);
 
         RefreshGameState();
-    }
-    
-    private void CheckLaserKillZone(Vector2Int pos)
-    {
-        // A. Check Snakes
-        foreach (var snake in snakesOnLevel.ToList())
-        {
-            if (snake.Body.Contains(pos))
-            {
-                if (snake.Color == ColorType.Blue) continue; // Blue Immunity
-                snake.SliceAt(pos);
-            }
-        }
-
-        // B. Check Boxes/Ice
-        var objects = grid.GetObjects(pos);
-        var entity = objects.OfType<GridEntity>().FirstOrDefault();
-        if (entity != null)
-        {
-            DestroyGridEntity(entity);
-        }
     }
 
     private void SpawnFruitFromRemainingSnakes(Vector2Int exitPosition)
     {
         List<ColorType> remainingColors = snakesOnLevel.Select(s => s.Color).Distinct().ToList();
-
         if (remainingColors.Count == 0) return;
 
-        FruitData newFruit = new FruitData
-        {
-            colors = remainingColors,
-            position = exitPosition
-        };
-
+        FruitData newFruit = new FruitData { colors = remainingColors, position = exitPosition };
         Fruit fruitObject = new Fruit(newFruit);
         grid.AddObject(exitPosition.x, exitPosition.y, fruitObject);
 
@@ -263,24 +386,15 @@ public class GameManager : MonoBehaviour
     public void ReportFruitEaten(FruitData data)
     {
         Fruit f = grid.GetObjectOfType<Fruit>(data.position);
-        if (f != null)
-        {
-            grid.RemoveObject(data.position.x, data.position.y, f);
-        }
+        if (f != null) grid.RemoveObject(data.position.x, data.position.y, f);
         OnFruitEaten?.Invoke(data);
     }
 
-    // --- Helpers ---
-
-    private bool IsCellOccupied(Vector2Int pos)
+    public bool IsCellOccupied(Vector2Int pos)
     {
-        // Check Snakes
         if (snakesOnLevel.Any(s => s.Body.Contains(pos))) return true;
-
-        // Check Boxes/Ice
         if (grid.HasObjectOfType<Box>(pos)) return true;
         if (grid.HasObjectOfType<IceCube>(pos)) return true;
-
         return false;
     }
 
@@ -288,18 +402,11 @@ public class GameManager : MonoBehaviour
     {
         foreach (var s in snakesOnLevel)
         {
+            if (s.Body.Count == 0) continue; // Skip dead snakes
             if (pos == s.GetHeadPosition()) { part = SnakeEnd.Head; return s; }
             if (pos == s.GetTailPosition()) { part = SnakeEnd.Tail; return s; }
         }
         part = default; return null;
-    }
-
-    public void KillSnake(Snake snake)
-    {
-        snake.RemoveFromGame();
-        snakesOnLevel.Remove(snake);
-        RefreshGameState();
-        Debug.Log("Snake Destroyed.");
     }
 
     private void LinkPortals()
@@ -315,160 +422,7 @@ public class GameManager : MonoBehaviour
             }
         }
     }
-    
-    
-    // --- Update in GameManager.cs ---
 
-    
-    private void MoveGridEntity(GridEntity entity, Vector2Int delta)
-    {
-        var grid = this.grid;
-        
-        // Remove from old positions
-        foreach (var pos in entity.OccupiedCells)
-        {
-            grid.RemoveObject(pos.x, pos.y, entity);
-        }
-
-        // Calculate new positions
-        List<Vector2Int> newPositions = new List<Vector2Int>();
-        foreach (var pos in entity.OccupiedCells)
-        {
-            newPositions.Add(pos + delta);
-        }
-
-        // Update Entity
-        entity.ClearPositions();
-        foreach (var pos in newPositions)
-        {
-            entity.AddPosition(pos);
-            grid.AddObject(pos.x, pos.y, entity);
-        }
-
-        // Trigger Events (Visuals)
-        for (int i = 0; i < newPositions.Count; i++)
-        {
-            Vector2Int oldPos = newPositions[i] - delta;
-            if (entity is Box) OnBoxMoved?.Invoke(oldPos, newPositions[i]);
-            else if (entity is IceCube) OnIceCubeMoved?.Invoke(oldPos, newPositions[i]);
-        }
-        
-        RefreshGameState();
-    }
-
-    // 2. UPDATED MOVE BOX
-    public void MoveBox(Vector2Int from, Vector2Int to)
-    {
-        Box box = grid.GetObjectOfType<Box>(from);
-        if (box == null) return;
-
-        // 1. Calculate Delta (Direction)
-        Vector2Int delta = to - from;
-
-        // 2. Portal Check (Simple 1x1 Portal Logic for shapes)
-        // If the 'leading' cell hits a portal, we calculate a jump
-        Portal portal = grid.GetObjectOfType<Portal>(to);
-        if (portal != null && portal.IsActive())
-        {
-            Vector2Int exitPos = portal.GetLinkedPortal().GetData().position;
-            delta = exitPos - from; // Recalculate delta to jump across map
-        }
-
-        // 3. Move the Entity
-        MoveGridEntity(box, delta);
-        CheckHazards(box);
-        
-        // 4. Check if it falls into holes
-        CheckGravity(box);
-    }
-
-
-    public void MoveIceCube(Vector2Int from, Vector2Int to)
-    {
-        IceCube ice = grid.GetObjectOfType<IceCube>(from);
-        if (ice == null) return;
-        
-        // Note: Snake.cs IceCube logic pre-calculates the final position 
-        // including slide momentum and portals. We just calculate the delta.
-        Vector2Int delta = to - from;
-
-        MoveGridEntity(ice, delta);
-        CheckHazards(ice);
-        
-        CheckGravity(ice);
-        
-    }
-
-
-    private void CheckGravity(GridEntity entity)
-    {
-        int supportNeeded = entity.OccupiedCells.Count;
-        int holesFound = 0;
-        List<Hole> holesUnderneath = new List<Hole>();
-
-        foreach (var pos in entity.OccupiedCells)
-        {
-            Hole h = grid.GetObjectOfType<Hole>(pos);
-            if (h != null)
-            {
-                holesFound++;
-                holesUnderneath.Add(h);
-            }
-        }
-
-        // Falls only if COMPLETELY over holes
-        if (holesFound == supportNeeded)
-        {
-            // Remove Entity
-            foreach (var pos in entity.OccupiedCells)
-            {
-                grid.RemoveObject(pos.x, pos.y, entity);
-                
-                // Visual cleanup event for object destruction
-                // OnObjectDestroyed?.Invoke(pos); // Add this if you implemented the destruction event
-            }
-
-            // Remove Holes
-            foreach (var pos in entity.OccupiedCells)
-            {
-                Hole h = grid.GetObjectOfType<Hole>(pos);
-                if (h != null)
-                {
-                    grid.RemoveObject(pos.x, pos.y, h);
-                    OnHoleFilled?.Invoke(pos, pos);
-                }
-            }
-            RefreshGameState();
-        }
-    }
-    private void CheckHazards(GridEntity entity)
-    {
-        // Check every cell the object occupies
-        foreach (var pos in entity.OccupiedCells)
-        {
-            // If there is an Active Laser Gate, destroy the object
-            LaserGate laser = grid.GetObjectOfType<LaserGate>(pos);
-            if (laser != null && laser.IsActive)
-            {
-                DestroyGridEntity(entity);
-                return;
-            }
-        }
-    }
-
-    private void DestroyGridEntity(GridEntity entity)
-    {
-        foreach (var pos in entity.OccupiedCells)
-        {
-            grid.RemoveObject(pos.x, pos.y, entity);
-            // If you want visuals to vanish, you need an event here:
-            // OnObjectDestroyed?.Invoke(pos); 
-        }
-        // Force visual update if needed, or just refresh logic
-        RefreshGameState();
-        Debug.Log("Grid Entity Destroyed by Hazard");
-    }
-    
     public void ClearLevelData()
     {
         snakesOnLevel.Clear();
@@ -476,5 +430,6 @@ public class GameManager : MonoBehaviour
         liftGatesByColor.Clear();
         laserGatesByColor.Clear();
         allPortals.Clear();
+        portalStates.Clear();
     }
 }

@@ -44,7 +44,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6a842cbac003eb447b1711776c92af51, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  headPrefab: {fileID: 8110669280161148910, guid: 3d6d5bc112249744bb8cc35c729942a2, type: 3}
+  headPrefab: {fileID: 8110669280161148910, guid: dc96ee8153da8814c8d98db3d3a5f914, type: 3}
   bodyPrefab: {fileID: 8110669280161148910, guid: 3d6d5bc112249744bb8cc35c729942a2, type: 3}
   tailPrefab: {fileID: 8110669280161148910, guid: 3d6d5bc112249744bb8cc35c729942a2, type: 3}
   moveDuration: 0.15
