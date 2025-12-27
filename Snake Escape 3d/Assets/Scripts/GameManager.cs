@@ -14,6 +14,11 @@ public class GameManager : MonoBehaviour
     // --- Events ---
     public event EventHandler LevelWin;
     public event EventHandler ReloadLevel;
+
+    public void ReloadLevelHandler()
+    {
+        ReloadLevel?.Invoke(this, EventArgs.Empty);
+    }
     public event Action<Level_SO> OnLevelLoaded;
     
     // Object Events
